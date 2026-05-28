@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: "0 18 * * 1"   # every Monday at 18:00 UTC (weekly data refresh)
+
+jobs:
+  # ── Python: lint + test ────────────────────────────────────────────────────
+  python:
+    name: Python lint & test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff
+
+      - name: Lint with ruff (src/ and backend/)
+        run: ruff check src/ backend/
+
+      - name: Run tests
+        env:
+          PYTHONPATH: .
+        run: pytest tests/ -v --tb=short
+
+  # ── Frontend: build check ──────────────────────────────────────────────────
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install npm deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Vite build
+        working-directory: frontend
+        run: npm run build
+
+  # ── Weekly data refresh ────────────────────────────────────────────────────
+  weekly-refresh:
+    name: Weekly data refresh
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Refresh AAPL data
+        env:
+          PYTHONPATH: .
+        run: python -m pipeline.ingest --ticker AAPL
+
+      - name: Commit updated data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/raw/AAPL.csv data/processed/AAPL_features.csv
+          git diff --staged --quiet || git commit -m "chore: weekly AAPL data refresh [skip ci]"
+          git push
