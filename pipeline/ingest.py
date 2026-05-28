@@ -10,7 +10,7 @@ RAW_DIR = pathlib.Path(__file__).parent.parent / "data" / "raw"
 TICKERS = ["AAPL", "MSFT", "GOOGL", "NVDA", "SPY"]
 
 
-def ingest(ticker: str = "AAPL", period: str = "5y") -> pathlib.Path:
+def ingest(ticker: str = "AAPL", period: str = "10y") -> pathlib.Path:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
     df.index = pd.to_datetime(df.index)
@@ -23,7 +23,7 @@ def ingest(ticker: str = "AAPL", period: str = "5y") -> pathlib.Path:
     return out
 
 
-def download_ticker(ticker: str, period: str = "5y") -> bool:
+def download_ticker(ticker: str, period: str = "10y") -> bool:
     """Download, compute features, and validate a single ticker. Returns True on success."""
     from pipeline.features import compute_features
     from pipeline.validate import validate
@@ -37,7 +37,7 @@ def download_ticker(ticker: str, period: str = "5y") -> bool:
         return False
 
 
-def run_all(tickers: list[str] = TICKERS, period: str = "5y",
+def run_all(tickers: list[str] = TICKERS, period: str = "10y",
             max_workers: int = 5) -> dict[str, bool]:
     """Run the full pipeline for all tickers in parallel via threading."""
     results: dict[str, bool] = {}
@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--ticker", default=None,
                         help="Single ticker to download (omit for all)")
-    parser.add_argument("--period", default="5y")
+    parser.add_argument("--period", default="10y")
     args = parser.parse_args()
 
     if args.ticker:

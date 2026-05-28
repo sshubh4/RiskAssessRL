@@ -40,13 +40,24 @@ export default function Topbar({
     }}>
       {/* Logo / Brand */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '12px' }}>
-        <div style={{
-          width: '28px', height: '28px',
-          background: 'linear-gradient(135deg, #2962ff 0%, #1a3fa3 100%)',
-          borderRadius: '6px',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '13px', fontWeight: 700, color: '#fff',
-        }}>R</div>
+        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="tb-bar3" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#5c8df6"/>
+              <stop offset="100%" stopColor="#1e53e5"/>
+            </linearGradient>
+          </defs>
+          <rect width="32" height="32" rx="7" fill="#131722"/>
+          <line x1="5" y1="26.5" x2="27" y2="26.5" stroke="#2a2e39" strokeWidth="0.75"/>
+          <rect x="5.5" y="21" width="5" height="5.5" rx="1" fill="#2e3d5c"/>
+          <rect x="13.5" y="15" width="5" height="11.5" rx="1" fill="#26a69a"/>
+          <rect x="21.5" y="8" width="5" height="18.5" rx="1" fill="url(#tb-bar3)"/>
+          <polyline points="8,21 16,15 24,8"
+            stroke="#5c8df6" strokeWidth="1.5"
+            strokeLinecap="round" strokeLinejoin="round" opacity="0.65"/>
+          <circle cx="24" cy="8" r="2.8" fill="#1e2a42"/>
+          <circle cx="24" cy="8" r="1.6" fill="#5c8df6"/>
+        </svg>
         <span style={{ fontWeight: 700, fontSize: '14px', color: '#d1d4dc', letterSpacing: '-0.02em' }}>
           RiskAssessRL
         </span>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Topbar from './components/Topbar'
 import LeftPanel from './components/LeftPanel'
 import TradingChart from './components/TradingChart'
@@ -67,16 +67,30 @@ export default function App() {
   const [running, setRunning]     = useState(false)
   const [simParams, setSimParams] = useState(defaultSimParams('DQN'))
 
-  const [ohlcv, setOhlcv]           = useState([])
-  const [bahHistory, setBahHistory] = useState([])
-  const [comparison, setComparison] = useState([])
-  const [bahData, setBahData]       = useState(null)
+  const [ohlcv, setOhlcv]               = useState([])
+  const [testStartIdx, setTestStartIdx] = useState(0)
+  const [bahHistory, setBahHistory]     = useState([])   // live-computed AAPL B&H fallback
+  const [comparison, setComparison]     = useState([])
+  const [bahData, setBahData]           = useState(null)
+  const [spyBenchmark, setSpyBenchmark]   = useState(null)  // from comparison.json
+  const [aaplBenchmark, setAaplBenchmark] = useState(null)  // from comparison.json
+  const [regime, setRegime]               = useState(null)
   const [dataFreshness, setDataFreshness] = useState(null)
   const [modelsLoaded, setModelsLoaded]   = useState(0)
 
   const [steps, setSteps]               = useState([])
   const [portfolioHistory, setPortfolioHistory] = useState([])
-  const [showTable, setShowTable]       = useState(true)
+  const [view, setView]                 = useState('charts')  // 'charts' | 'compare'
+
+  // Backtest-specific risk management params
+  const [btStopLoss,   setBtStopLoss]   = useState(0)    // 0 = OFF, else integer % e.g. 15 → -15%
+  const [btTakeProfit, setBtTakeProfit] = useState(0)    // 0 = OFF, else integer % e.g. 25 → +25%
+  const [btMaxDD,      setBtMaxDD]      = useState(0)    // 0 = OFF, else integer % e.g. 20 → -20%
+  const [btPosSize,    setBtPosSize]    = useState(1.0)  // fraction 0.1–1.0
+
+  // Custom test date range (indices into ohlcv); synced with ticker load
+  const [btRangeStart, setBtRangeStart] = useState(0)   // updated after ohlcv loads
+  const [btRangeEnd,   setBtRangeEnd]   = useState(0)   // updated after ohlcv loads
 
   // Saved runs for compare-params feature (up to 3)
   const [savedRuns, setSavedRuns] = useState([])
@@ -89,24 +103,42 @@ export default function App() {
     setSimParams(defaultSimParams(algo))
   }, [algo])
 
+  // Sync test range to the canonical split whenever ohlcv/ticker changes
+  useEffect(() => {
+    if (testStartIdx > 0 && ohlcv.length > 0) {
+      setBtRangeStart(testStartIdx)
+      setBtRangeEnd(ohlcv.length - 1)
+    }
+  }, [testStartIdx, ohlcv.length])
+
   // Load data on ticker change
   useEffect(() => {
     fetch(`/api/data?ticker=${ticker}`)
       .then(r => r.json())
       .then(d => {
         const data = d.data ?? []
+        const tsi  = d.test_start_idx ?? Math.floor(data.length * 0.8)
         setOhlcv(data)
-        const prices = data.map(x => x.close)
-        if (prices.length) {
-          const shares = Math.floor(capital / prices[0])
-          const cash = capital - shares * prices[0]
-          setBahHistory(prices.map(p => cash + shares * p))
+        setTestStartIdx(tsi)
+        if (d.regime) setRegime(d.regime)
+        // Live-computed AAPL B&H — used as fallback when comparison.json has no portfolio_history
+        const testPrices = data.slice(tsi).map(x => x.close)
+        if (testPrices.length) {
+          const shares = Math.floor(capital / testPrices[0])
+          const cash   = capital - shares * testPrices[0]
+          setBahHistory(testPrices.map(p => cash + shares * p))
         }
       }).catch(() => {})
 
     fetch('/api/algorithms')
       .then(r => r.json())
-      .then(d => { setComparison(d.results ?? []); setBahData(d.buy_and_hold ?? null) })
+      .then(d => {
+        setComparison(d.results ?? [])
+        setBahData(d.buy_and_hold ?? null)
+        const bm = d.benchmarks ?? {}
+        setSpyBenchmark(bm.sp500  && bm.sp500.portfolio_history?.length  ? bm.sp500  : null)
+        setAaplBenchmark(bm.aapl_hold && bm.aapl_hold.portfolio_history?.length ? bm.aapl_hold : null)
+      })
       .catch(() => {})
 
     fetch('/health')
@@ -115,14 +147,15 @@ export default function App() {
       .catch(() => {})
   }, [ticker])
 
-  // Recompute B&H when capital changes
+  // Recompute B&H when capital changes (always anchored to test period start)
   useEffect(() => {
     if (!ohlcv.length) return
-    const prices = ohlcv.map(x => x.close)
-    const shares = Math.floor(capital / prices[0])
-    const cash = capital - shares * prices[0]
-    setBahHistory(prices.map(p => cash + shares * p))
-  }, [capital, ohlcv])
+    const testPrices = ohlcv.slice(testStartIdx).map(x => x.close)
+    if (!testPrices.length) return
+    const shares = Math.floor(capital / testPrices[0])
+    const cash   = capital - shares * testPrices[0]
+    setBahHistory(testPrices.map(p => cash + shares * p))
+  }, [capital, ohlcv, testStartIdx])
 
   const runSimulation = useCallback(() => {
     if (running) return
@@ -136,7 +169,19 @@ export default function App() {
     const ws = new WebSocket(WS_URL)
     wsRef.current = ws
 
-    const payload = { algo, capital, speed, ticker, commission, ...simParams }
+    // In backtest mode use bt-specific params; in simulate mode use simParams
+    const payload = mode === 'backtest'
+      ? {
+          algo, capital, speed, ticker, commission,
+          position_size: btPosSize, risk_aversion: 0.5,
+          epsilon: 0.0, temperature: 1.0, action_threshold: 0.0,
+          ...(btStopLoss   > 0 ? { stop_loss:         btStopLoss   / 100 } : {}),
+          ...(btTakeProfit > 0 ? { take_profit:        btTakeProfit / 100 } : {}),
+          ...(btMaxDD      > 0 ? { max_drawdown_kill:  btMaxDD      / 100 } : {}),
+          test_start_idx: btRangeStart,
+          test_end_idx:   btRangeEnd + 1,   // API is exclusive end
+        }
+      : { algo, capital, speed, ticker, commission, ...simParams }
     ws.onopen = () => ws.send(JSON.stringify(payload))
 
     ws.onmessage = e => {
@@ -149,7 +194,13 @@ export default function App() {
         setRunning(false)
         fetch('/api/algorithms')
           .then(r => r.json())
-          .then(d => { setComparison(d.results ?? []); setBahData(d.buy_and_hold ?? null) })
+          .then(d => {
+            setComparison(d.results ?? [])
+            setBahData(d.buy_and_hold ?? null)
+            const bm = d.benchmarks ?? {}
+            setSpyBenchmark(bm.sp500  && bm.sp500.portfolio_history?.length  ? bm.sp500  : null)
+            setAaplBenchmark(bm.aapl_hold && bm.aapl_hold.portfolio_history?.length ? bm.aapl_hold : null)
+          })
           .catch(() => {})
       } else if (msg.type === 'error') {
         console.error('WS error:', msg.message)
@@ -159,7 +210,43 @@ export default function App() {
 
     ws.onerror = () => setRunning(false)
     ws.onclose = () => setRunning(false)
-  }, [algo, capital, speed, ticker, commission, simParams, running])
+  }, [algo, capital, speed, ticker, commission, simParams, running,
+      mode, btStopLoss, btTakeProfit, btMaxDD, btPosSize, btRangeStart, btRangeEnd])
+
+  const runAllBacktest = useCallback(async () => {
+    if (running) return
+    setRunning(true)
+    setSteps([])
+    setPortfolioHistory([capital])
+    stepsRef.current = []
+    try {
+      const res = await fetch('/api/run_all_backtest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ticker, capital, commission,
+          position_size:     btPosSize,
+          stop_loss:         btStopLoss   > 0 ? btStopLoss   / 100 : null,
+          take_profit:       btTakeProfit > 0 ? btTakeProfit / 100 : null,
+          max_drawdown_kill: btMaxDD      > 0 ? btMaxDD      / 100 : null,
+          test_start_idx:    btRangeStart,
+          test_end_idx:      btRangeEnd + 1,
+        }),
+      })
+      const d = await res.json()
+      setComparison(d.results ?? [])
+      setBahData(d.buy_and_hold ?? null)
+      const bm = d.benchmarks ?? {}
+      setSpyBenchmark(bm.sp500  && bm.sp500.portfolio_history?.length  ? bm.sp500  : null)
+      setAaplBenchmark(bm.aapl_hold && bm.aapl_hold.portfolio_history?.length ? bm.aapl_hold : null)
+      setView('compare')    // auto-switch to compare tab
+    } catch (err) {
+      console.error('Run All failed:', err)
+    } finally {
+      setRunning(false)
+    }
+  }, [running, ticker, capital, commission, btStopLoss, btTakeProfit, btMaxDD, btPosSize,
+      btRangeStart, btRangeEnd])
 
   const saveRun = useCallback(() => {
     if (!stepsRef.current.length) return
@@ -185,7 +272,24 @@ export default function App() {
   const clearRuns = useCallback(() => setSavedRuns([]), [])
 
   const bahSlice = bahHistory.slice(0, portfolioHistory.length)
-  const stats = computeStats(stepsRef.current, capital, bahSlice)
+
+  // Use SPY benchmark (scaled to current capital) for "vs benchmark" stat.
+  // Fall back to live-computed AAPL B&H if comparison.json has no SPY history yet.
+  const spySlice = useMemo(() => {
+    if (!spyBenchmark?.portfolio_history?.length) return bahSlice
+    const scale = capital / 100_000
+    return spyBenchmark.portfolio_history
+      .slice(0, portfolioHistory.length)
+      .map(v => v * scale)
+  }, [spyBenchmark, portfolioHistory.length, capital, bahSlice])
+
+  const aaplBahSlice = useMemo(() => {
+    if (!aaplBenchmark?.portfolio_history?.length) return bahSlice
+    const scale = capital / 100_000
+    return aaplBenchmark.portfolio_history.map(v => v * scale)
+  }, [aaplBenchmark, capital, bahSlice])
+
+  const stats = computeStats(stepsRef.current, capital, spySlice)
 
   const lastPrice  = ohlcv.length ? ohlcv[ohlcv.length - 1].close : null
   const prevPrice  = ohlcv.length > 1 ? ohlcv[ohlcv.length - 2].close : null
@@ -214,46 +318,74 @@ export default function App() {
           onSaveRun={saveRun}
           onClearRuns={clearRuns}
           hasCurrentRun={stepsRef.current.length > 0}
+          btStopLoss={btStopLoss}     onBtStopLoss={setBtStopLoss}
+          btTakeProfit={btTakeProfit} onBtTakeProfit={setBtTakeProfit}
+          btMaxDD={btMaxDD}           onBtMaxDD={setBtMaxDD}
+          btPosSize={btPosSize}       onBtPosSize={setBtPosSize}
+          btRangeStart={btRangeStart} onBtRangeStart={setBtRangeStart}
+          btRangeEnd={btRangeEnd}     onBtRangeEnd={setBtRangeEnd}
+          onRunAll={runAllBacktest}
+          ohlcv={ohlcv} testStartIdx={testStartIdx}
         />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-          <div style={{ flex: '3', minHeight: 0, borderBottom: '1px solid #2a2e39' }}>
-            <TradingChart ohlcv={ohlcv} steps={steps} ticker={ticker} />
+
+          {/* View toggle tab bar */}
+          <div style={{
+            display: 'flex', flexShrink: 0,
+            borderBottom: '1px solid #2a2e39', background: '#1e2329',
+          }}>
+            {[['charts', 'Charts'], ['compare', 'Compare Algos']].map(([id, label]) => (
+              <button key={id} onClick={() => setView(id)}
+                style={{
+                  padding: '7px 18px', border: 'none', background: 'transparent',
+                  cursor: 'pointer', fontSize: 10, fontWeight: 700,
+                  textTransform: 'uppercase', letterSpacing: '0.07em',
+                  color: view === id ? '#d1d4dc' : '#4c525e',
+                  borderBottom: view === id ? '2px solid #2962ff' : '2px solid transparent',
+                  transition: 'color 0.15s',
+                }}>
+                {label}
+              </button>
+            ))}
           </div>
-          <StatStrip stats={stats} algo={algo} />
-          <div style={{ flex: '2', minHeight: 0 }}>
-            <PortfolioChart
-              portfolioHistory={portfolioHistory}
-              bahHistory={bahSlice}
-              ohlcv={ohlcv}
-              initialCapital={capital}
-              savedRuns={savedRuns}
-            />
-          </div>
+
+          {/* Charts view */}
+          {view === 'charts' && (
+            <>
+              <div style={{ flex: '3', minHeight: 0, borderBottom: '1px solid #2a2e39' }}>
+                <TradingChart ohlcv={ohlcv} steps={steps} ticker={ticker}
+                  testStartIdx={testStartIdx} regime={regime} />
+              </div>
+              <StatStrip stats={stats} algo={algo} />
+              <div style={{ flex: '2', minHeight: 0 }}>
+                <PortfolioChart
+                  portfolioHistory={portfolioHistory}
+                  spyHistory={spySlice}
+                  aaplBahHistory={aaplBahSlice}
+                  ohlcv={ohlcv.slice(testStartIdx)}
+                  initialCapital={capital}
+                  savedRuns={savedRuns}
+                  algo={algo}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Compare view — full height */}
+          {view === 'compare' && (
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 20px' }}>
+              <ComparisonTable
+                results={comparison}
+                bahData={bahData}
+                spyBenchmark={spyBenchmark}
+                aaplBenchmark={aaplBenchmark}
+              />
+            </div>
+          )}
+
         </div>
 
-      </div>
-
-      <div style={{
-        height: showTable ? '160px' : '32px', flexShrink: 0,
-        borderTop: '1px solid #2a2e39', background: '#1e2329',
-        transition: 'height 0.2s ease', overflow: 'hidden',
-      }}>
-        <div
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '6px 16px', cursor: 'pointer',
-            borderBottom: showTable ? '1px solid #2a2e39' : 'none' }}
-          onClick={() => setShowTable(t => !t)}
-        >
-          <span style={{ fontSize: '10px', color: '#787b86', textTransform: 'uppercase',
-            letterSpacing: '0.08em', fontWeight: 600 }}>Algorithm Comparison</span>
-          <span style={{ color: '#787b86', fontSize: '11px' }}>{showTable ? '▼' : '▲'}</span>
-        </div>
-        {showTable && (
-          <div style={{ height: '128px', overflowY: 'auto' }}>
-            <ComparisonTable results={comparison} bahData={bahData} />
-          </div>
-        )}
       </div>
     </div>
   )

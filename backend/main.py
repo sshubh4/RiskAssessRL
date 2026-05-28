@@ -199,37 +199,106 @@ def _select_action(algo: str, agent, obs: np.ndarray, sim_params: dict) -> int:
     return agent.act_greedy(obs) if hasattr(agent, "act_greedy") else agent.act(obs)
 
 
-def _run_simulation(algo: str, capital: float, ticker: str = "AAPL",
-                    commission: float = 0.0, sim_params: dict | None = None) -> dict:
+def _run_simulation(
+    algo: str,
+    capital: float,
+    ticker: str = "AAPL",
+    commission: float = 0.0,
+    sim_params: dict | None = None,
+    stop_loss: float | None = None,          # fraction, e.g. 0.10 = stop at -10%
+    take_profit: float | None = None,        # fraction, e.g. 0.20 = exit at +20%
+    max_drawdown_kill: float | None = None,  # fraction, e.g. 0.20 = halt at -20% from peak
+    test_start_idx: int | None = None,       # bar index in full df where test begins
+    test_end_idx: int | None = None,         # bar index in full df where test ends (exclusive)
+) -> dict:
     from src.env import StockTradingEnv
 
     sp = sim_params or {}
     position_size = float(sp.get("position_size", 1.0))
     risk_aversion = float(sp.get("risk_aversion", 0.5))
 
-    df = get_df(ticker)
+    df            = get_df(ticker)
+    default_split = int(0.8 * len(df))
+    custom_split  = test_start_idx if test_start_idx is not None else default_split
+    custom_end    = test_end_idx   if test_end_idx   is not None else len(df)
+    # Clamp to valid bounds
+    custom_split  = max(0, min(custom_split, len(df) - 21))
+    custom_end    = max(custom_split + 20, min(custom_end, len(df)))
+
+    test_df  = df.iloc[custom_split:custom_end].reset_index(drop=True)  # for price lookups
+
     env = StockTradingEnv(df, train=False, initial_capital=capital,
                           commission_pct=commission,
                           position_size=position_size,
-                          risk_aversion=risk_aversion)
-    obs_dim = env.observation_space.shape[0]
+                          risk_aversion=risk_aversion,
+                          custom_split=custom_split,
+                          custom_end=custom_end)
+    obs_dim  = env.observation_space.shape[0]
     n_actions = env.action_space.n
-    agent = _build_agent(algo, obs_dim, n_actions)
+    agent    = _build_agent(algo, obs_dim, n_actions)
 
     obs, _ = env.reset()
-    done = False
+    done   = False
+
+    # ── Risk-management tracking ─────────────────────────────────────────────
+    in_position  = False
+    entry_price: float | None = None
+    peak_value   = capital
+    forced_stop  = False
+    stop_reason: str | None = None
+
     while not done:
+        # Current price (before this step)
+        cur_step = getattr(env, "current_step", 0)
+        current_price: float | None = (
+            float(test_df.iloc[cur_step]["Close"])
+            if cur_step < len(test_df) else None
+        )
+
+        # Choose action
         if sp:
             action = _select_action(algo, agent, obs, sp)
         elif algo.upper() in ("RANDOM", "DQN", "DDQN"):
             action = agent.act(obs)
         else:
             action = agent.act_greedy(obs)
+
+        # ── Override action if stop-loss / take-profit triggered ─────────────
+        if in_position and entry_price is not None and current_price is not None:
+            price_ret = (current_price - entry_price) / entry_price
+            if stop_loss and price_ret <= -abs(stop_loss):
+                action = 1   # forced sell — stop loss
+            elif take_profit and price_ret >= abs(take_profit):
+                action = 1   # forced sell — take profit
+
         obs, _, terminated, truncated, _ = env.step(action)
+
+        # ── Update position tracking ─────────────────────────────────────────
+        if env._step_log:
+            last = env._step_log[-1]
+            if last["action"] == 0 and last.get("shares", 0) > 0 and not in_position:
+                in_position = True
+                entry_price = current_price
+            elif last["action"] == 1 and last.get("shares", 0) == 0 and in_position:
+                in_position = False
+                entry_price = None
+
+            # ── Max-drawdown kill switch ─────────────────────────────────────
+            if max_drawdown_kill:
+                pv = last["portfolio_value"]
+                peak_value = max(peak_value, pv)
+                if (pv - peak_value) / peak_value <= -abs(max_drawdown_kill):
+                    forced_stop = True
+                    stop_reason = "max_drawdown_kill"
+                    break
+
         done = terminated or truncated
 
     steps = env._step_log
     extra = _compute_extra_metrics(steps, capital)
+    if forced_stop:
+        extra["forced_stop"] = True
+        extra["stop_reason"] = stop_reason
     return {"steps": steps, "metrics": extra}
 
 
@@ -279,29 +348,57 @@ def get_tickers():
     return {"tickers": available, "all": TICKERS}
 
 
+def _compute_regime() -> dict:
+    """Detect market regime from SPY test-period return."""
+    try:
+        spy_path = PROC_DIR / "SPY_features.csv"
+        spy_df   = pd.read_csv(spy_path, parse_dates=["Date"])
+        split    = int(0.8 * len(spy_df))
+        spy_test = spy_df.iloc[split:].reset_index(drop=True)
+        spy_ret  = (spy_test["Close"].iloc[-1] - spy_test["Close"].iloc[0]) / spy_test["Close"].iloc[0] * 100
+        spy_ret  = round(float(spy_ret), 1)
+        if spy_ret > 15:
+            return {"label": "Bull Market",     "color": "#26a69a", "spy_return": spy_ret}
+        if spy_ret < -10:
+            return {"label": "Bear Market",     "color": "#ef5350", "spy_return": spy_ret}
+        return     {"label": "Sideways Market", "color": "#f5c842", "spy_return": spy_ret}
+    except Exception:
+        return {"label": "Unknown", "color": "#787b86", "spy_return": 0}
+
+
 @app.get("/api/algorithms")
 def get_algorithms():
     if not RESULTS_PATH.exists():
-        return {"results": [], "buy_and_hold": None}
+        return {"results": [], "buy_and_hold": None,
+                "benchmarks": {"sp500": {}, "aapl_hold": {}}}
     data = json.loads(RESULTS_PATH.read_text())
+    # Ensure benchmarks key exists (old comparison.json may not have it)
+    if "benchmarks" not in data:
+        data["benchmarks"] = {"sp500": {}, "aapl_hold": {}}
     return data
 
 
 @app.get("/api/data")
 def get_ohlcv(ticker: str = Query(default="AAPL")):
     df = get_df(ticker.upper())
-    test = _test_slice(df)
+    test_start_idx = int(0.8 * len(df))   # index in full array where test period begins
     records = []
-    for _, row in test.iterrows():
+    for _, row in df.iterrows():           # return ALL bars (train + test)
         records.append({
-            "date": str(row["Date"].date()),
-            "open": round(float(row["Open"]), 4),
-            "high": round(float(row["High"]), 4),
-            "low": round(float(row["Low"]), 4),
-            "close": round(float(row["Close"]), 4),
+            "date":   str(row["Date"].date()),
+            "open":   round(float(row["Open"]),   4),
+            "high":   round(float(row["High"]),   4),
+            "low":    round(float(row["Low"]),    4),
+            "close":  round(float(row["Close"]),  4),
             "volume": int(row["Volume"]),
         })
-    return {"ticker": ticker.upper(), "data": records}
+    regime = _compute_regime()
+    return {
+        "ticker":         ticker.upper(),
+        "data":           records,
+        "test_start_idx": test_start_idx,
+        "regime":         regime,
+    }
 
 
 @app.get("/api/compare")
@@ -335,16 +432,17 @@ def get_compare(ticker: str = Query(default="AAPL")):
         except Exception as exc:
             results.append({"algo": algo, "error": str(exc)})
 
-    bah = buy_and_hold_return(df)
-    bah_metrics = {
-        "algo": "Buy&Hold",
-        "final_portfolio_value": round(bah[-1], 2),
-        "total_return_pct": round(total_return_pct(bah), 4),
-        "sharpe_ratio": round(sharpe_ratio(bah), 4),
-        "max_drawdown": round(max_drawdown(bah), 6),
-        "n_steps": len(bah) - 1,
+    from src.evaluate import sp500_benchmark, aapl_buy_hold_benchmark
+    split       = int(0.8 * len(df))
+    test_prices = df.iloc[split:]["Close"].values
+    spy_bench   = sp500_benchmark(test_prices)
+    aapl_bench  = aapl_buy_hold_benchmark(test_prices)
+    return {
+        "ticker":      ticker.upper(),
+        "results":     results,
+        "buy_and_hold": aapl_bench,         # backward compat
+        "benchmarks":  {"sp500": spy_bench, "aapl_hold": aapl_bench},
     }
-    return {"ticker": ticker.upper(), "results": results, "buy_and_hold": bah_metrics}
 
 
 class SimRequest(BaseModel):
@@ -403,6 +501,69 @@ def backtest(req: BacktestRequest):
     }
 
 
+class RunAllRequest(BaseModel):
+    ticker:             str   = "AAPL"
+    capital:            float = 100_000.0
+    commission:         float = 0.001
+    position_size:      float = 1.0
+    stop_loss:          float | None = None   # fraction e.g. 0.10
+    take_profit:        float | None = None   # fraction e.g. 0.20
+    max_drawdown_kill:  float | None = None   # fraction e.g. 0.20
+    test_start_idx:     int   | None = None   # bar index in full df
+    test_end_idx:       int   | None = None   # bar index in full df (exclusive)
+
+
+@app.post("/api/run_all_backtest")
+def run_all_backtest(req: RunAllRequest):
+    """Run all 5 algorithms with the same backtest parameters and return comparison."""
+    from src.evaluate import sharpe_ratio, max_drawdown, total_return_pct
+    from src.evaluate import sp500_benchmark, aapl_buy_hold_benchmark
+
+    sp = {"position_size": req.position_size, "risk_aversion": 0.5,
+          "epsilon": 0.0, "temperature": 1.0, "action_threshold": 0.0}
+
+    results = []
+    for algo in ["DQN", "DDQN", "A2C", "PPO", "Random"]:
+        try:
+            sim  = _run_simulation(
+                algo, req.capital, req.ticker, req.commission, sp,
+                stop_loss=req.stop_loss,
+                take_profit=req.take_profit,
+                max_drawdown_kill=req.max_drawdown_kill,
+                test_start_idx=req.test_start_idx,
+                test_end_idx=req.test_end_idx,
+            )
+            hist = [req.capital] + [s["portfolio_value"] for s in sim["steps"]]
+            results.append({
+                "algo":                  algo,
+                "name":                  algo,
+                "final_portfolio_value": round(hist[-1], 2),
+                "total_return_pct":      round(total_return_pct(hist), 4),
+                "sharpe_ratio":          round(sharpe_ratio(hist), 4),
+                "max_drawdown":          round(max_drawdown(hist), 6),
+                "n_trades":              sim["metrics"]["total_trades"],
+                "win_rate":              sim["metrics"]["win_rate"],
+                "portfolio_history":     hist,
+                **sim["metrics"],
+            })
+        except Exception as exc:
+            results.append({"algo": algo, "error": str(exc)})
+
+    df           = get_df(req.ticker)
+    default_split = int(0.8 * len(df))
+    t_start      = req.test_start_idx if req.test_start_idx is not None else default_split
+    t_end        = req.test_end_idx   if req.test_end_idx   is not None else len(df)
+    test_prices  = df.iloc[t_start:t_end]["Close"].values
+    spy_bench   = sp500_benchmark(test_prices,          capital=req.capital)
+    aapl_bench  = aapl_buy_hold_benchmark(test_prices,  capital=req.capital)
+
+    return {
+        "results":     results,
+        "buy_and_hold": aapl_bench,
+        "benchmarks":  {"sp500": spy_bench, "aapl_hold": aapl_bench},
+    }
+
+
 # ---------------------------------------------------------------------------
 # WebSocket streaming endpoint
 # ---------------------------------------------------------------------------
@@ -424,11 +585,25 @@ async def ws_simulate(websocket: WebSocket):
             "temperature":      float(raw.get("temperature", 1.0)),
             "action_threshold": float(raw.get("action_threshold", 0.0)),
         }
+        # Risk-management overrides (backtest mode)
+        raw_sl  = raw.get("stop_loss",         None)
+        raw_tp  = raw.get("take_profit",        None)
+        raw_mdd = raw.get("max_drawdown_kill",  None)
+        stop_loss         = float(raw_sl)  if raw_sl  is not None else None
+        take_profit       = float(raw_tp)  if raw_tp  is not None else None
+        max_drawdown_kill = float(raw_mdd) if raw_mdd is not None else None
+        # Custom test date range
+        raw_tsi = raw.get("test_start_idx", None)
+        raw_tei = raw.get("test_end_idx",   None)
+        test_start_idx = int(raw_tsi) if raw_tsi is not None else None
+        test_end_idx   = int(raw_tei) if raw_tei is not None else None
 
         delay = max(0.005, 0.05 / speed)
 
         result = await asyncio.get_event_loop().run_in_executor(
-            None, _run_simulation, algo, capital, ticker, commission, sp
+            None, _run_simulation, algo, capital, ticker, commission, sp,
+            stop_loss, take_profit, max_drawdown_kill,
+            test_start_idx, test_end_idx,
         )
         steps = result["steps"]
         extra = result["metrics"]

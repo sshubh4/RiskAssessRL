@@ -106,20 +106,169 @@ function buildExplainer(algo, p) {
 
 // ── tabs ─────────────────────────────────────────────────────────────────────
 
-function BacktestTab({ capital, onCapital, commission, onCommission, speed, onSpeed,
-  onRun, running }) {
+function BacktestTab({
+  capital, onCapital, commission, onCommission, speed, onSpeed,
+  stopLoss, onStopLoss, takeProfit, onTakeProfit, maxDD, onMaxDD,
+  posSize, onPosSize,
+  rangeStart, onRangeStart, rangeEnd, onRangeEnd,
+  ohlcv, testStartIdx,
+  onRun, onRunAll, running,
+}) {
+  const totalBars = ohlcv.length
+  const selDays   = rangeEnd - rangeStart + 1
+  const selYears  = selDays > 0 ? (selDays / 252).toFixed(1) : '—'
+  const startDate = ohlcv[rangeStart]?.date ?? '—'
+  const endDate   = ohlcv[rangeEnd]?.date   ?? '—'
+  // Warn if custom range differs from canonical test period
+  const isCustom  = rangeStart !== testStartIdx || rangeEnd !== totalBars - 1
+
+  const anyRiskActive = stopLoss > 0 || takeProfit > 0 || maxDD > 0
+
   return (
-    <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 0 }}>
+    <div style={{ padding: '10px 14px' }}>
+
+      {/* Test date range pickers */}
+      {totalBars > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: '#4c525e',
+              textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Test Range
+            </div>
+            {isCustom && (
+              <span style={{ fontSize: 9, fontWeight: 600, color: '#f5c842',
+                background: 'rgba(245,200,66,0.12)', border: '1px solid rgba(245,200,66,0.3)',
+                padding: '1px 5px', borderRadius: 3 }}>
+                CUSTOM
+              </span>
+            )}
+          </div>
+
+          {/* Start slider */}
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+              <span style={{ fontSize: 11, color: '#787b86' }}>Start</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#d1d4dc',
+                fontVariantNumeric: 'tabular-nums' }}>
+                {startDate}
+              </span>
+            </div>
+            <input type="range"
+              min={0} max={Math.max(0, rangeEnd - 20)} step={1}
+              value={rangeStart}
+              disabled={running}
+              onChange={e => onRangeStart(Number(e.target.value))}
+              style={{ width: '100%', accentColor: '#2962ff',
+                cursor: running ? 'not-allowed' : 'pointer' }} />
+          </div>
+
+          {/* End slider */}
+          <div style={{ marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+              <span style={{ fontSize: 11, color: '#787b86' }}>End</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#d1d4dc',
+                fontVariantNumeric: 'tabular-nums' }}>
+                {endDate}
+              </span>
+            </div>
+            <input type="range"
+              min={Math.min(totalBars - 1, rangeStart + 20)}
+              max={totalBars - 1} step={1}
+              value={rangeEnd}
+              disabled={running}
+              onChange={e => onRangeEnd(Number(e.target.value))}
+              style={{ width: '100%', accentColor: '#2962ff',
+                cursor: running ? 'not-allowed' : 'pointer' }} />
+          </div>
+
+          {/* Summary row */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            background: '#2a2e39', borderRadius: 4, padding: '5px 8px',
+          }}>
+            <span style={{ fontSize: 10, color: '#787b86' }}>
+              {selDays} days · {selYears} yrs
+            </span>
+            {isCustom && (
+              <button onClick={() => { onRangeStart(testStartIdx); onRangeEnd(totalBars - 1) }}
+                disabled={running}
+                style={{
+                  fontSize: 9, color: '#5c8df6', background: 'transparent', border: 'none',
+                  cursor: 'pointer', padding: 0, fontWeight: 600,
+                }}>
+                Reset ↺
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <Slider label="Capital" value={capital} min={10000} max={500000} step={5000}
         disabled={running} onChange={onCapital} fmt={v => `$${v.toLocaleString()}`} />
       <Slider label="Commission" value={commission} min={0} max={0.005} step={0.0001}
         disabled={running} onChange={onCommission} fmt={v => `${(v * 100).toFixed(2)}%`}
-        hint="Per-side cost" />
+        hint="Per-side transaction cost" />
+      <Slider label="Position Size" value={posSize} min={0.1} max={1.0} step={0.1}
+        disabled={running} onChange={onPosSize}
+        fmt={v => `${Math.round(v * 100)}%`}
+        hint="% of capital deployed per trade" />
+
+      <Divider />
+
+      {/* Risk management section */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: '#4c525e',
+          textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Risk Management
+        </div>
+        {anyRiskActive && (
+          <span style={{ fontSize: 9, color: '#26a69a', fontWeight: 600 }}>ACTIVE</span>
+        )}
+      </div>
+
+      <Slider label="Stop Loss" value={stopLoss} min={0} max={30} step={1}
+        disabled={running} onChange={onStopLoss}
+        fmt={v => v === 0 ? 'OFF' : `-${v}%`}
+        hint={stopLoss > 0 ? `Force-sell if position falls ${stopLoss}%` : 'No automatic exit on loss'} />
+      <Slider label="Take Profit" value={takeProfit} min={0} max={50} step={5}
+        disabled={running} onChange={onTakeProfit}
+        fmt={v => v === 0 ? 'OFF' : `+${v}%`}
+        hint={takeProfit > 0 ? `Lock in gains when position up ${takeProfit}%` : 'No automatic profit lock'} />
+      <Slider label="Max DD Kill" value={maxDD} min={0} max={50} step={5}
+        disabled={running} onChange={onMaxDD}
+        fmt={v => v === 0 ? 'OFF' : `-${v}%`}
+        hint={maxDD > 0 ? `Halt if portfolio draws down ${maxDD}% from peak` : 'No portfolio kill switch'} />
+
       <Divider />
       <Label>Playback Speed</Label>
       <SpeedPills speed={speed} onSpeed={onSpeed} disabled={running} />
-      <div style={{ height: 12 }} />
+      <div style={{ height: 10 }} />
+
       <RunButton onClick={onRun} disabled={running} running={running} label="Run Backtest" />
+      <div style={{ height: 6 }} />
+
+      {/* Run All Algos button */}
+      <button onClick={onRunAll} disabled={running}
+        style={{
+          width: '100%', padding: '9px 0', borderRadius: 5,
+          border: '1px solid #2a2e39',
+          background: running ? 'transparent' : '#2a2e39',
+          color: running ? '#4c525e' : '#787b86',
+          fontSize: 11, fontWeight: 600,
+          cursor: running ? 'not-allowed' : 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          transition: 'background 0.1s, color 0.1s',
+        }}
+        onMouseEnter={e => { if (!running) { e.currentTarget.style.background = '#363c4e'; e.currentTarget.style.color = '#d1d4dc' }}}
+        onMouseLeave={e => { e.currentTarget.style.background = running ? 'transparent' : '#2a2e39'; e.currentTarget.style.color = running ? '#4c525e' : '#787b86' }}
+      >
+        <span>⚖</span> Run All 5 Algos &amp; Compare
+      </button>
+      <div style={{ fontSize: 9, color: '#4c525e', marginTop: 4, textAlign: 'center', lineHeight: 1.5 }}>
+        Applies the same risk rules to all strategies · opens Compare tab
+      </div>
     </div>
   )
 }
@@ -253,6 +402,10 @@ export default function LeftPanel({
   algo, onAlgo, capital, onCapital, commission, onCommission,
   speed, onSpeed, mode, onMode, simParams, onSimParams,
   onRun, running, savedRuns, onSaveRun, onClearRuns, hasCurrentRun,
+  btStopLoss, onBtStopLoss, btTakeProfit, onBtTakeProfit,
+  btMaxDD, onBtMaxDD, btPosSize, onBtPosSize,
+  btRangeStart, onBtRangeStart, btRangeEnd, onBtRangeEnd,
+  onRunAll, ohlcv = [], testStartIdx = 0,
 }) {
   return (
     <div style={{
@@ -298,9 +451,20 @@ export default function LeftPanel({
       {/* Tab content — scrollable */}
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {mode === 'backtest'
-          ? <BacktestTab capital={capital} onCapital={onCapital}
-              commission={commission} onCommission={onCommission}
-              speed={speed} onSpeed={onSpeed} onRun={onRun} running={running} />
+          ? <BacktestTab
+              capital={capital}         onCapital={onCapital}
+              commission={commission}   onCommission={onCommission}
+              speed={speed}             onSpeed={onSpeed}
+              stopLoss={btStopLoss}     onStopLoss={onBtStopLoss}
+              takeProfit={btTakeProfit} onTakeProfit={onBtTakeProfit}
+              maxDD={btMaxDD}           onMaxDD={onBtMaxDD}
+              posSize={btPosSize}       onPosSize={onBtPosSize}
+              rangeStart={btRangeStart} onRangeStart={onBtRangeStart}
+              rangeEnd={btRangeEnd}     onRangeEnd={onBtRangeEnd}
+              ohlcv={ohlcv}             testStartIdx={testStartIdx}
+              onRun={onRun}             onRunAll={onRunAll}
+              running={running}
+            />
           : <SimulateTab algo={algo} p={simParams} setP={onSimParams}
               onRun={onRun} running={running}
               capital={capital} onCapital={onCapital}

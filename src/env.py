@@ -13,26 +13,29 @@ class StockTradingEnv(gymnasium.Env):
     metadata = {"render_modes": ["human"]}
 
     def __init__(self, df: pd.DataFrame, train: bool = True, window_size: int = 50,
-                 initial_capital: float = 100_000.0, max_steps: int = 150,
+                 initial_capital: float = 100_000.0, max_steps: int = 252,
                  commission_pct: float = 0.0,
                  position_size: float = 1.0,
-                 risk_aversion: float = 0.5):
+                 risk_aversion: float = 0.5,
+                 custom_split: int | None = None,
+                 custom_end:   int | None = None):
         super().__init__()
         self.window_size = window_size
         self.initial_capital = initial_capital
-        self.max_steps = max_steps
+        self.max_steps = max_steps          # used only during training episodes
         self.commission_pct = commission_pct
-        self.position_size = max(0.1, min(1.0, position_size))   # clamp [0.1, 1.0]
-        self.risk_aversion = max(0.0, min(1.0, risk_aversion))   # clamp [0.0, 1.0]
+        self.position_size = max(0.1, min(1.0, position_size))
+        self.risk_aversion = max(0.0, min(1.0, risk_aversion))
         self.feature_cols = [c for c in FEATURE_COLS if c in df.columns]
 
-        split = int(0.8 * len(df))
+        split = custom_split if custom_split is not None else int(0.8 * len(df))
+        end   = custom_end   if custom_end   is not None else len(df)
         self.raw_df = df
-        self.market = df.iloc[:split].reset_index(drop=True) if train \
-                      else df.iloc[split:].reset_index(drop=True)
         self.train = train
+        self.market = (df.iloc[:split].reset_index(drop=True) if train
+                       else df.iloc[split:end].reset_index(drop=True))
 
-        # Z-score normalise features in-place on the split slice
+        # Z-score normalise features on the split slice
         self._normed = self.market.copy()
         for col in self.feature_cols:
             mu = self._normed[col].mean()
@@ -44,18 +47,23 @@ class StockTradingEnv(gymnasium.Env):
         obs_len = self.window_size * len(self.feature_cols) + 1
         self.observation_space = spaces.Box(-np.inf, np.inf, shape=(obs_len,), dtype=np.float32)
 
+        # Max usable start index so a full window + at least one step fits
+        self._max_start = max(0, len(self.market) - self.window_size - 2)
+
         self._step_log: list[dict] = []
+        self.start_idx = 0
         self.reset()
 
     # ------------------------------------------------------------------
     def _obs(self) -> np.ndarray:
-        window = self._normed.iloc[self.current_step: self.current_step + self.window_size]
+        idx = self.start_idx + self.current_step
+        window = self._normed.iloc[idx: idx + self.window_size]
         obs = window[self.feature_cols].values.astype(np.float32).flatten()
         holding = np.array([1.0 if self.num_shares > 0 else 0.0], dtype=np.float32)
         return np.concatenate([obs, holding])
 
     def _price(self) -> float:
-        idx = self.current_step + self.window_size
+        idx = self.start_idx + self.current_step + self.window_size
         return float(self.market.iloc[idx]["Close"])
 
     def reset(self, *, seed=None, options=None):
@@ -67,14 +75,27 @@ class StockTradingEnv(gymnasium.Env):
         self.account_history: list[float] = [self.initial_capital]
         self.current_step = 0
         self._step_log = []
+
+        # ── Random start during training ──────────────────────────────
+        # Each episode samples a random window within training data so the
+        # agent sees all market regimes, not just the first 150 days.
+        if self.train and self._max_start > 0:
+            # Leave room for max_steps + window ahead of start
+            max_valid = max(0, self._max_start - self.max_steps)
+            self.start_idx = int(self.np_random.integers(0, max_valid + 1))
+        else:
+            self.start_idx = 0  # test: always run from the beginning of test slice
+
         return self._obs(), {}
 
     def step(self, action: int):
         price = self._price()
+        prev_value = self.total_value   # capture before action executes
         reward = 0.0
         invalid = False
 
-        if action == 0:  # Buy — deploy position_size fraction of capital
+        # ── Buy ──────────────────────────────────────────────────────
+        if action == 0:
             deployable = self.capital * self.position_size
             shares = int(deployable // price)
             if shares > 0:
@@ -85,7 +106,6 @@ class StockTradingEnv(gymnasium.Env):
                     self.book_value += cost + commission
                     self.capital -= cost + commission
                 else:
-                    # Can afford shares but not commission — buy fewer
                     shares = int(self.capital // (price * (1 + self.commission_pct)))
                     if shares > 0:
                         cost = shares * price
@@ -98,12 +118,12 @@ class StockTradingEnv(gymnasium.Env):
             else:
                 invalid = True
 
-        elif action == 1:  # Sell — liquidate everything
+        # ── Sell ─────────────────────────────────────────────────────
+        elif action == 1:
             if self.num_shares > 0:
                 proceeds = self.num_shares * price
                 commission = proceeds * self.commission_pct
                 net_proceeds = proceeds - commission
-                reward += (net_proceeds - self.book_value) / self.initial_capital * 10
                 self.capital += net_proceeds
                 self.book_value = 0.0
                 self.num_shares = 0
@@ -113,38 +133,48 @@ class StockTradingEnv(gymnasium.Env):
         if invalid:
             reward -= 0.1
 
-        prev_value = self.total_value
         self.total_value = self.capital + self.num_shares * price
         self.account_history.append(self.total_value)
 
-        # Holding reward: small positive signal for growing portfolio
-        if self.total_value > prev_value:
-            reward += 0.01
+        # ── Continuous P&L reward ─────────────────────────────────────
+        # Reward every step based on portfolio return vs previous step.
+        # This gives dense, immediate feedback so the agent can learn to
+        # time buys/sells rather than waiting for sparse sell events.
+        # Holding cash earns 0; holding a rising stock earns positive reward.
+        reward += (self.total_value - prev_value) / self.initial_capital * 10
 
-        # Sharpe-inspired volatility penalty — scaled by risk_aversion
-        # risk_aversion=0.0 → no penalty; 0.5 → baseline 0.1; 1.0 → 0.2
-        if len(self.account_history) > 10:
+        # ── Volatility penalty (inference-time risk aversion) ─────────
+        # Light penalty only when risk_aversion > 0 so training is not
+        # dominated by the penalty.  Applied after the P&L signal.
+        if self.risk_aversion > 0 and len(self.account_history) > 10:
             hist = np.array(self.account_history[-11:])
-            rets = np.diff(hist) / hist[:-1]
-            reward -= np.std(rets) * 0.1 * (self.risk_aversion * 2.0)
+            rets = np.diff(hist) / np.clip(hist[:-1], 1e-8, None)
+            reward -= np.std(rets) * 0.05 * self.risk_aversion
 
         self._step_log.append({
-            "step": self.current_step,
-            "price": round(price, 4),
-            "action": int(action),
+            "step":            self.current_step,
+            "price":           round(price, 4),
+            "action":          int(action),
             "portfolio_value": round(self.total_value, 2),
-            "capital": round(self.capital, 2),
-            "shares": int(self.num_shares),
+            "capital":         round(self.capital, 2),
+            "shares":          int(self.num_shares),
         })
 
         self.current_step += 1
-        terminated = (self.current_step + self.window_size) >= len(self.market) - 1 \
-                     or self.current_step >= self.max_steps
+
+        # ── Termination ───────────────────────────────────────────────
+        # Test mode: run until we exhaust the test slice (no max_steps cap).
+        # Train mode: cap at max_steps so episodes stay manageable.
+        next_global_idx = self.start_idx + self.current_step + self.window_size
+        out_of_data = next_global_idx >= len(self.market)
+        hit_step_limit = self.train and (self.current_step >= self.max_steps)
+        terminated = out_of_data or hit_step_limit
+
         return self._obs(), reward, terminated, False, {
             "total_value": self.total_value,
-            "capital": self.capital,
-            "shares": self.num_shares,
-            "price": price,
+            "capital":     self.capital,
+            "shares":      self.num_shares,
+            "price":       price,
         }
 
     def render(self):
