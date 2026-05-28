@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary:     #131722;
+  --bg-secondary:   #1e2329;
+  --bg-card:        #2a2e39;
+  --bg-hover:       #363c4e;
+  --text-primary:   #d1d4dc;
+  --text-secondary: #787b86;
+  --text-muted:     #4c525e;
+  --green:          #26a69a;
+  --red:            #ef5350;
+  --blue:           #2962ff;
+  --blue-light:     #5c8df6;
+  --border:         #2a2e39;
+  --border-light:   #363c4e;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb { background: var(--bg-card); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--bg-hover); }
+
+.tv-lightweight-charts { font-family: inherit !important; }
