@@ -5,6 +5,7 @@ import TradingChart from './components/TradingChart'
 import PortfolioChart from './components/PortfolioChart'
 import StatStrip from './components/StatStrip'
 import ComparisonTable from './components/ComparisonTable'
+import AlgorithmsTab from './components/AlgorithmsTab'
 
 const WS_URL = `ws://${window.location.hostname}:8000/ws/simulate`
 
@@ -77,6 +78,7 @@ export default function App() {
   const [regime, setRegime]               = useState(null)
   const [dataFreshness, setDataFreshness] = useState(null)
   const [modelsLoaded, setModelsLoaded]   = useState(0)
+  const [models, setModels]               = useState({})  // per-algo loaded status
 
   const [steps, setSteps]               = useState([])
   const [portfolioHistory, setPortfolioHistory] = useState([])
@@ -143,7 +145,11 @@ export default function App() {
 
     fetch('/health')
       .then(r => r.json())
-      .then(d => { setDataFreshness(d.data_freshness); setModelsLoaded(d.models_loaded ?? 0) })
+      .then(d => {
+        setDataFreshness(d.data_freshness)
+        setModelsLoaded(d.models_loaded ?? 0)
+        setModels(d.models ?? {})
+      })
       .catch(() => {})
   }, [ticker])
 
@@ -271,6 +277,26 @@ export default function App() {
 
   const clearRuns = useCallback(() => setSavedRuns([]), [])
 
+  // Called from AlgorithmsTab — applies recommended settings and switches to backtest
+  const applyAlgoConfig = useCallback((algoId, cfg) => {
+    setAlgo(algoId)
+    setMode('backtest')
+    if (cfg) {
+      if (cfg.stop_loss    != null) setBtStopLoss(cfg.stop_loss)
+      if (cfg.take_profit  != null) setBtTakeProfit(cfg.take_profit)
+      if (cfg.position_size != null) setBtPosSize(cfg.position_size)
+      // Also update simulate params so the simulate tab reflects the recommendation
+      setSimParams(prev => ({
+        ...prev,
+        ...(cfg.epsilon      != null ? { epsilon:          cfg.epsilon      } : {}),
+        ...(cfg.temperature  != null ? { temperature:      cfg.temperature  } : {}),
+        ...(cfg.risk_aversion != null ? { risk_aversion:   cfg.risk_aversion } : {}),
+        ...(cfg.position_size != null ? { position_size:   cfg.position_size } : {}),
+      }))
+    }
+    setView('charts')  // switch to charts so user can see the run
+  }, [])
+
   const bahSlice = bahHistory.slice(0, portfolioHistory.length)
 
   // Use SPY benchmark (scaled to current capital) for "vs benchmark" stat.
@@ -335,7 +361,7 @@ export default function App() {
             display: 'flex', flexShrink: 0,
             borderBottom: '1px solid #2a2e39', background: '#1e2329',
           }}>
-            {[['charts', 'Charts'], ['compare', 'Compare Algos']].map(([id, label]) => (
+            {[['charts', 'Charts'], ['compare', 'Compare Algos'], ['models', 'Models']].map(([id, label]) => (
               <button key={id} onClick={() => setView(id)}
                 style={{
                   padding: '7px 18px', border: 'none', background: 'transparent',
@@ -380,6 +406,18 @@ export default function App() {
                 bahData={bahData}
                 spyBenchmark={spyBenchmark}
                 aaplBenchmark={aaplBenchmark}
+              />
+            </div>
+          )}
+
+          {/* Models showcase tab */}
+          {view === 'models' && (
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              <AlgorithmsTab
+                results={comparison}
+                models={models}
+                spyBenchmark={spyBenchmark}
+                onApply={applyAlgoConfig}
               />
             </div>
           )}
