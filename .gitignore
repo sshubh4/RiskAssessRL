@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.DS_Store
+
+# MLflow runs — don't commit (large + machine-specific)
+mlruns/
+
+# Frontend build output and deps
+frontend/node_modules/
+frontend/dist/
+
+# Keep data/raw and data/processed CSVs — they are source of truth for backtests
+# (remove this comment to stop committing data; add data/ to ignore if desired)
+
+# Keep trained model weights — reviewers need them to reproduce results
+# To exclude large .pth files, uncomment the line below:
+# *.pth

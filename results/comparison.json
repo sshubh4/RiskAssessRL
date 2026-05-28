@@ -1,0 +1,60 @@
+{
+  "results": [
+    {
+      "algo": "Random",
+      "final_portfolio_value": 107609.74,
+      "total_return_pct": 7.6097,
+      "sharpe_ratio": 0.6654,
+      "max_drawdown": -0.090838,
+      "n_steps": 150
+    },
+    {
+      "algo": "DQN",
+      "final_portfolio_value": 106815.23,
+      "total_return_pct": 6.8152,
+      "sharpe_ratio": 0.5712,
+      "max_drawdown": -0.080589,
+      "n_steps": 150
+    },
+    {
+      "algo": "DDQN",
+      "final_portfolio_value": 105671.1,
+      "total_return_pct": 5.6711,
+      "sharpe_ratio": 0.4191,
+      "max_drawdown": -0.130903,
+      "n_steps": 150
+    },
+    {
+      "algo": "A2C",
+      "final_portfolio_value": 100000.0,
+      "total_return_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "n_steps": 150
+    },
+    {
+      "algo": "PPO",
+      "final_portfolio_value": 100000.0,
+      "total_return_pct": 0.0,
+      "sharpe_ratio": 0.0,
+      "max_drawdown": 0.0,
+      "n_steps": 150
+    },
+    {
+      "algo": "Buy&Hold",
+      "final_portfolio_value": 152698.11,
+      "total_return_pct": 52.6981,
+      "sharpe_ratio": 1.9257,
+      "max_drawdown": -0.137912,
+      "n_steps": 240
+    }
+  ],
+  "buy_and_hold": {
+    "algo": "Buy&Hold",
+    "final_portfolio_value": 152698.11,
+    "total_return_pct": 52.6981,
+    "sharpe_ratio": 1.9257,
+    "max_drawdown": -0.137912,
+    "n_steps": 240
+  }
+}
