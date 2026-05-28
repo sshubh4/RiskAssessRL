@@ -50,7 +50,7 @@ export default function StatStrip({ stats, algo }) {
       <Stat label="Trades"  border
         value={trades}
         color="#d1d4dc" />
-      <Stat label={`vs B&H · ${algo}`}
+      <Stat label="vs S&P 500"
         value={vsBah != null ? `${vsBah >= 0 ? '+' : ''}${vsBah.toFixed(2)}%` : '—'}
         color={bahColor} />
     </div>
