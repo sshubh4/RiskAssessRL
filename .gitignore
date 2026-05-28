@@ -1,19 +1,50 @@
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+myenv/
+env/
+
+# ── Environment ───────────────────────────────────────────────────────────────
 .env
-.DS_Store
+.env.*
 
-# MLflow runs — don't commit (large + machine-specific)
+# ── MLflow ────────────────────────────────────────────────────────────────────
+# Experiment artifacts are machine-specific and large; re-generated on next run
 mlruns/
+mlflow.db
 
-# Frontend build output and deps
+# ── Frontend build output and deps ────────────────────────────────────────────
 frontend/node_modules/
 frontend/dist/
+node_modules/
 
-# Keep data/raw and data/processed CSVs — they are source of truth for backtests
-# (remove this comment to stop committing data; add data/ to ignore if desired)
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
 
-# Keep trained model weights — reviewers need them to reproduce results
-# To exclude large .pth files, uncomment the line below:
-# *.pth
+# ── Large binary / media (archive folder is the only exception) ───────────────
+*.zip
+*.tar.gz
+*.mp4
+*.docx
+
+# ── Allowlisted: keep these even though patterns above might match ─────────────
+# Production model weights — needed to reproduce results without retraining
+!models/*.pth
+# Processed feature CSVs — source of truth for backtests
+!data/processed/
+!data/raw/
+# Comparison results shown in the UI
+!results/comparison.json
