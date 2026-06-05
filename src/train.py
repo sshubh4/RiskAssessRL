@@ -1,7 +1,6 @@
 """Training loop for all agents with MLflow experiment tracking."""
 from __future__ import annotations
 import argparse
-import io
 import pathlib
 import numpy as np
 import matplotlib
@@ -12,7 +11,7 @@ import mlflow.pytorch
 import pandas as pd
 
 from src.env import StockTradingEnv
-from src.agents import (RandomAgent, DQNAgent, DoubleDQNAgent, A2CAgent, PPOAgent)
+from src.agents import (DQNAgent, DoubleDQNAgent, A2CAgent, PPOAgent)
 from src.evaluate import sharpe_ratio, max_drawdown, total_return_pct
 
 MODEL_DIR = pathlib.Path(__file__).parent.parent / "models"
@@ -22,8 +21,10 @@ DATA_PATH = pathlib.Path(__file__).parent.parent / "data" / "processed" / "AAPL_
 def _reward_plot(rewards: list[float], algo: str) -> str:
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(rewards, linewidth=1.5, color="#00ff87")
-    ax.set_xlabel("Episode"); ax.set_ylabel("Cumulative Reward")
-    ax.set_title(f"{algo} – Reward per Episode"); ax.grid(alpha=0.3)
+    ax.set_xlabel("Episode")
+    ax.set_ylabel("Cumulative Reward")
+    ax.set_title(f"{algo} – Reward per Episode")
+    ax.grid(alpha=0.3)
     fig.tight_layout()
     path = str(MODEL_DIR / f"{algo.lower()}_reward_curve.png")
     fig.savefig(path, dpi=100)
@@ -58,7 +59,6 @@ def train_dqn(df: pd.DataFrame, episodes: int = 2000, hidden: int = 64,
             obs, _ = env.reset()
             total_r = 0.0
             done = False
-            prev_obs = obs
             while not done:
                 action = agent.act(obs)
                 next_obs, r, terminated, truncated, _ = env.step(action)
@@ -122,13 +122,17 @@ def train_a2c(df: pd.DataFrame, episodes: int = 300, hidden: int = 256,
             trajectory = []
             total_r = 0.0
             while not done:
-                action, value = agent.act(obs)
+                mask = env.valid_action_mask()
+                action, value = agent.act(obs, mask)
                 next_obs, r, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
-                trajectory.append((obs, action, r, value))
+                trajectory.append((obs, action, r, value, mask))
                 obs = next_obs
                 total_r += r
-            agent.update(trajectory)
+            # Entropy bonus annealing: explore hard early (0.05) to avoid the
+            # always-Hold collapse, then sharpen the policy late (0.005).
+            ent_coef = 0.05 - 0.045 * ep / max(1, episodes - 1)
+            agent.update(trajectory, entropy_coef=ent_coef)
             rewards.append(total_r)
 
             if (ep + 1) % 50 == 0:
@@ -142,7 +146,7 @@ def train_a2c(df: pd.DataFrame, episodes: int = 300, hidden: int = 256,
         obs, _ = test_env.reset()
         done = False
         while not done:
-            action = agent.act_greedy(obs)
+            action = agent.act_greedy(obs, test_env.valid_action_mask())
             obs, _, terminated, truncated, _ = test_env.step(action)
             done = terminated or truncated
         hist = test_env.account_history
@@ -184,13 +188,16 @@ def train_ppo(df: pd.DataFrame, episodes: int = 300, hidden: int = 256,
             trajectory = []
             total_r = 0.0
             while not done:
-                action, log_prob, value = agent.act(obs)
+                mask = env.valid_action_mask()
+                action, log_prob, value = agent.act(obs, mask)
                 next_obs, r, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
-                trajectory.append((obs, action, r, value, log_prob))
+                trajectory.append((obs, action, r, value, log_prob, mask))
                 obs = next_obs
                 total_r += r
-            agent.update(trajectory)
+            # Entropy bonus annealing (see A2C note): 0.05 → 0.005 over training.
+            ent_coef = 0.05 - 0.045 * ep / max(1, episodes - 1)
+            agent.update(trajectory, entropy_coef=ent_coef)
             rewards.append(total_r)
 
             if (ep + 1) % 50 == 0:
@@ -204,7 +211,7 @@ def train_ppo(df: pd.DataFrame, episodes: int = 300, hidden: int = 256,
         obs, _ = test_env.reset()
         done = False
         while not done:
-            action = agent.act_greedy(obs)
+            action = agent.act_greedy(obs, test_env.valid_action_mask())
             obs, _, terminated, truncated, _ = test_env.step(action)
             done = terminated or truncated
         hist = test_env.account_history

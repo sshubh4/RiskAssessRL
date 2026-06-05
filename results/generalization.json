@@ -1,0 +1,56 @@
+{
+  "train_ticker": "AAPL",
+  "description": "DDQN trained only on AAPL, evaluated zero-shot on the test slice of each ticker (no retraining).",
+  "results": [
+    {
+      "ticker": "AAPL",
+      "is_train_ticker": true,
+      "ddqn_return_pct": 35.5054,
+      "ddqn_sharpe": 1.8239,
+      "ddqn_max_drawdown": -0.137822,
+      "buy_hold_return_pct": 52.6981,
+      "alpha_vs_buy_hold": -17.1927,
+      "n_steps": 191
+    },
+    {
+      "ticker": "MSFT",
+      "is_train_ticker": false,
+      "ddqn_return_pct": -17.4255,
+      "ddqn_sharpe": -1.0165,
+      "ddqn_max_drawdown": -0.338465,
+      "buy_hold_return_pct": -10.9479,
+      "alpha_vs_buy_hold": -6.4776,
+      "n_steps": 191
+    },
+    {
+      "ticker": "GOOGL",
+      "is_train_ticker": false,
+      "ddqn_return_pct": 62.3027,
+      "ddqn_sharpe": 2.4078,
+      "ddqn_max_drawdown": -0.203466,
+      "buy_hold_return_pct": 118.1924,
+      "alpha_vs_buy_hold": -55.8897,
+      "n_steps": 191
+    },
+    {
+      "ticker": "NVDA",
+      "is_train_ticker": false,
+      "ddqn_return_pct": 16.5221,
+      "ddqn_sharpe": 0.6607,
+      "ddqn_max_drawdown": -0.202021,
+      "buy_hold_return_pct": 49.2281,
+      "alpha_vs_buy_hold": -32.706,
+      "n_steps": 191
+    },
+    {
+      "ticker": "SPY",
+      "is_train_ticker": false,
+      "ddqn_return_pct": 11.3984,
+      "ddqn_sharpe": 0.931,
+      "ddqn_max_drawdown": -0.091167,
+      "buy_hold_return_pct": 25.7756,
+      "alpha_vs_buy_hold": -14.3772,
+      "n_steps": 191
+    }
+  ]
+}

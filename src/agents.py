@@ -1,6 +1,7 @@
 """All agent definitions: Random, DQN, DDQN, A2C, PPO."""
 from __future__ import annotations
-import math, random
+import math
+import random
 from collections import namedtuple, deque
 
 import numpy as np
@@ -10,6 +11,18 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _apply_mask(logits: torch.Tensor, mask) -> torch.Tensor:
+    """Set the logits of invalid actions to a large negative value so they are
+    never sampled / argmax-ed. ``mask`` is a bool array/tensor broadcastable to
+    ``logits`` (True = valid). Working on logits (not probs) keeps Categorical
+    entropy numerically stable."""
+    if mask is None:
+        return logits
+    m = torch.as_tensor(mask, dtype=torch.bool, device=logits.device)
+    return torch.where(m, logits, torch.full_like(logits, -1e9))
+
 
 # ---------------------------------------------------------------------------
 # Shared network building blocks
@@ -122,6 +135,21 @@ class DQNAgent:
         with torch.no_grad():
             return self.policy_net(s).argmax(1).item()
 
+    def act_greedy(self, obs: np.ndarray, mask=None) -> int:
+        """Pure greedy action (no epsilon). Use for evaluation / inference.
+
+        A freshly loaded agent has step_count=0, which makes the epsilon
+        property ~1.0 — so act() would be almost fully random at eval time.
+        act_greedy bypasses epsilon entirely, matching the backend's
+        inference path (policy_net.argmax with epsilon=0). ``mask`` is accepted
+        for a uniform agent API; with mask=None (the default for DQN/DDQN) it
+        is a no-op, so behaviour is unchanged.
+        """
+        s = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(device)
+        with torch.no_grad():
+            q = self.policy_net(s).squeeze(0)
+        return int(_apply_mask(q, mask).argmax().item())
+
     def remember(self, state, action, next_state, reward):
         s = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
         a = torch.tensor([[action]], dtype=torch.long)
@@ -193,44 +221,52 @@ class A2CAgent:
         self.model = ActorCritic(obs_dim, n_actions, hidden).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
-    def act(self, obs: np.ndarray) -> tuple[int, float]:
+    def act(self, obs: np.ndarray, mask=None) -> tuple[int, float]:
         s = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(device)
         with torch.no_grad():
-            probs, value = self.model(s)
-        dist = torch.distributions.Categorical(probs.squeeze(0))
-        action = dist.sample().item()
-        return action, value.item()
+            h      = self.model.trunk(s)
+            logits = _apply_mask(self.model.actor(h).squeeze(0), mask)
+            value  = self.model.critic(h).squeeze(0)
+        action = torch.distributions.Categorical(logits=logits).sample()
+        return int(action.item()), float(value.item())
 
-    def act_greedy(self, obs: np.ndarray) -> int:
+    def act_greedy(self, obs: np.ndarray, mask=None) -> int:
         s = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(device)
         with torch.no_grad():
-            probs, _ = self.model(s)
-        return probs.argmax(1).item()
+            logits = _apply_mask(self.model.actor(self.model.trunk(s)).squeeze(0), mask)
+        return int(logits.argmax().item())
 
-    def update(self, trajectory: list[tuple]):
-        states, actions, rewards, values = zip(*trajectory)
+    def update(self, trajectory: list[tuple], entropy_coef: float = 0.02):
+        states, actions, rewards, _values, masks = zip(*trajectory)
         R, returns = 0.0, []
         for r in reversed(rewards):
             R = r + self.gamma * R
             returns.insert(0, R)
 
+        states_t  = torch.tensor(np.array(states), dtype=torch.float32).to(device)
+        actions_t = torch.tensor(actions, dtype=torch.long).to(device)
         returns_t = torch.tensor(returns, dtype=torch.float32).to(device)
-        values_t = torch.tensor(values, dtype=torch.float32).to(device)
-        advantages = returns_t - values_t
+        masks_t   = torch.as_tensor(np.array(masks), dtype=torch.bool).to(device)
 
-        policy_loss, value_loss, entropy_loss = [], [], []
-        for s, a, adv, ret in zip(states, actions, advantages, returns_t):
-            st = torch.tensor(s, dtype=torch.float32).unsqueeze(0).to(device)
-            probs, val = self.model(st)
-            logp = torch.log(probs.squeeze()[a] + 1e-8)
-            ent = -(probs * torch.log(probs + 1e-8)).sum()
-            policy_loss.append(-logp * adv.detach())
-            value_loss.append((ret - val.squeeze()) ** 2)
-            entropy_loss.append(-0.01 * ent)
+        h      = self.model.trunk(states_t)
+        logits = _apply_mask(self.model.actor(h), masks_t)
+        values = self.model.critic(h).squeeze(-1)
 
-        loss = (torch.stack(policy_loss).sum()
-                + torch.stack(value_loss).sum()
-                + torch.stack(entropy_loss).sum())
+        # ── Advantage normalisation — pairs with action masking against collapse ──
+        # As the critic learns to predict returns the raw advantages shrink
+        # toward zero; z-scoring keeps the policy-gradient signal at a stable
+        # scale so the agent keeps differentiating Buy/Sell/Hold throughout.
+        advantages = returns_t - values.detach()
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        dist    = torch.distributions.Categorical(logits=logits)
+        logp    = dist.log_prob(actions_t)
+        entropy = dist.entropy().mean()
+
+        policy_loss = -(logp * advantages).mean()
+        value_loss  = F.mse_loss(values, returns_t)
+        loss = policy_loss + 0.5 * value_loss - entropy_coef * entropy
+
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
@@ -258,47 +294,56 @@ class PPOAgent:
         self.model = ActorCritic(obs_dim, n_actions, hidden).to(device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
 
-    def act(self, obs: np.ndarray):
+    def act(self, obs: np.ndarray, mask=None):
         s = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(device)
         with torch.no_grad():
-            probs, value = self.model(s)
-        dist = torch.distributions.Categorical(probs.squeeze(0))
+            h      = self.model.trunk(s)
+            logits = _apply_mask(self.model.actor(h).squeeze(0), mask)
+            value  = self.model.critic(h).squeeze(0)
+        dist = torch.distributions.Categorical(logits=logits)
         action = dist.sample()
-        log_prob = dist.log_prob(action)
-        return action.item(), log_prob.item(), value.squeeze(0).item()
+        return int(action.item()), float(dist.log_prob(action).item()), float(value.item())
 
-    def act_greedy(self, obs: np.ndarray) -> int:
+    def act_greedy(self, obs: np.ndarray, mask=None) -> int:
         s = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(device)
         with torch.no_grad():
-            probs, _ = self.model(s)
-        return probs.argmax(1).item()
+            logits = _apply_mask(self.model.actor(self.model.trunk(s)).squeeze(0), mask)
+        return int(logits.argmax().item())
 
-    def update(self, trajectory: list[tuple]):
-        states, actions, rewards, values, log_probs_old = zip(*trajectory)
+    def update(self, trajectory: list[tuple], entropy_coef: float = 0.02):
+        states, actions, rewards, _values, log_probs_old, masks = zip(*trajectory)
         R, returns = 0.0, []
         for r in reversed(rewards):
             R = r + self.gamma * R
             returns.insert(0, R)
 
+        states_t  = torch.tensor(np.array(states), dtype=torch.float32).to(device)
+        actions_t = torch.tensor(actions, dtype=torch.long).to(device)
         returns_t = torch.tensor(returns, dtype=torch.float32).to(device)
-        values_t = torch.stack([v if isinstance(v, torch.Tensor)
-                                 else torch.tensor(v) for v in values]).to(device)
-        advantages = (returns_t - values_t).detach()
-        log_probs_old_t = torch.tensor(log_probs_old, dtype=torch.float32).to(device)
+        old_lp_t  = torch.tensor(log_probs_old, dtype=torch.float32).to(device)
+        masks_t   = torch.as_tensor(np.array(masks), dtype=torch.bool).to(device)
+
+        # Advantage normalisation (same anti-collapse rationale as A2C), computed
+        # once against the old value estimates, then reused across PPO epochs.
+        with torch.no_grad():
+            base_vals = self.model.critic(self.model.trunk(states_t)).squeeze(-1)
+        advantages = returns_t - base_vals
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         for _ in range(self.ppo_epochs):
-            p_losses, v_losses, e_losses = [], [], []
-            for s, a, old_lp, adv, ret in zip(states, actions, log_probs_old_t, advantages, returns_t):
-                st = torch.tensor(s, dtype=torch.float32).unsqueeze(0).to(device)
-                probs, val = self.model(st)
-                dist = torch.distributions.Categorical(probs.squeeze(0))
-                logp = dist.log_prob(torch.tensor(a).to(device))
-                ratio = torch.exp(logp - old_lp)
-                p_losses.append(-torch.min(ratio * adv, torch.clamp(ratio, 1 - self.clip, 1 + self.clip) * adv))
-                v_losses.append(F.mse_loss(val.squeeze(), ret))
-                e_losses.append(-0.01 * dist.entropy())
+            h      = self.model.trunk(states_t)
+            logits = _apply_mask(self.model.actor(h), masks_t)
+            values = self.model.critic(h).squeeze(-1)
+            dist  = torch.distributions.Categorical(logits=logits)
+            logp  = dist.log_prob(actions_t)
+            ratio = torch.exp(logp - old_lp_t)
+            surr1 = ratio * advantages
+            surr2 = torch.clamp(ratio, 1 - self.clip, 1 + self.clip) * advantages
+            policy_loss = -torch.min(surr1, surr2).mean()
+            value_loss  = F.mse_loss(values, returns_t)
+            entropy     = dist.entropy().mean()
+            loss = policy_loss + 0.5 * value_loss - entropy_coef * entropy
 
-            loss = torch.stack(p_losses).sum() + torch.stack(v_losses).sum() + torch.stack(e_losses).sum()
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)

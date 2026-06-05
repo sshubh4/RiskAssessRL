@@ -4,7 +4,6 @@ import asyncio
 import json
 import pathlib
 import random as _random
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -145,9 +144,9 @@ def _compute_extra_metrics(steps: list[dict], initial_capital: float) -> dict:
     }
 
 
-def _select_action(algo: str, agent, obs: np.ndarray, sim_params: dict) -> int:
+def _select_action(algo: str, agent, obs: np.ndarray, sim_params: dict, mask=None) -> int:
     """Apply inference-time simulation parameters to choose an action."""
-    from src.agents import device
+    from src.agents import device, _apply_mask
 
     algo_up = algo.upper()
 
@@ -182,7 +181,7 @@ def _select_action(algo: str, agent, obs: np.ndarray, sim_params: dict) -> int:
         s = torch.tensor(obs, dtype=torch.float32).unsqueeze(0).to(device)
         with torch.no_grad():
             h      = agent.model.trunk(s)
-            logits = agent.model.actor(h)
+            logits = _apply_mask(agent.model.actor(h), mask)
             temp   = max(temperature, 1e-3)
             probs  = F.softmax(logits / temp, dim=-1).squeeze(0)
 
@@ -255,13 +254,18 @@ def _run_simulation(
             if cur_step < len(test_df) else None
         )
 
+        # Policy-gradient agents (A2C/PPO) were trained with action masking, so
+        # mask invalid actions at inference too. DQN/DDQN were trained unmasked.
+        algo_up = algo.upper()
+        mask = env.valid_action_mask() if algo_up in ("A2C", "PPO") else None
+
         # Choose action
         if sp:
-            action = _select_action(algo, agent, obs, sp)
-        elif algo.upper() in ("RANDOM", "DQN", "DDQN"):
+            action = _select_action(algo, agent, obs, sp, mask)
+        elif algo_up in ("RANDOM", "DQN", "DDQN"):
             action = agent.act(obs)
         else:
-            action = agent.act_greedy(obs)
+            action = agent.act_greedy(obs, mask)
 
         # ── Override action if stop-loss / take-profit triggered ─────────────
         if in_position and entry_price is not None and current_price is not None:
@@ -404,14 +408,9 @@ def get_ohlcv(ticker: str = Query(default="AAPL")):
 @app.get("/api/compare")
 def get_compare(ticker: str = Query(default="AAPL")):
     """Run all 5 agents on the specified ticker and return comparison metrics."""
-    from src.evaluate import (sharpe_ratio, max_drawdown, total_return_pct,
-                               buy_and_hold_return)
-    from src.env import StockTradingEnv
+    from src.evaluate import (sharpe_ratio, max_drawdown, total_return_pct)
 
     df = get_df(ticker.upper())
-    env = StockTradingEnv(df, train=False)
-    obs_dim = env.observation_space.shape[0]
-    n_actions = env.action_space.n
 
     algos = ["Random", "DQN", "DDQN", "A2C", "PPO"]
     results = []

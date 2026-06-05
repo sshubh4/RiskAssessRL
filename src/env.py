@@ -66,6 +66,21 @@ class StockTradingEnv(gymnasium.Env):
         idx = self.start_idx + self.current_step + self.window_size
         return float(self.market.iloc[idx]["Close"])
 
+    def valid_action_mask(self) -> np.ndarray:
+        """Boolean mask over [Buy, Sell, Hold] of currently-valid actions.
+
+        Buy is valid only if at least one share is affordable; Sell only if
+        shares are held; Hold is always valid. Policy-gradient agents (A2C/PPO)
+        use this to avoid ever *sampling* an invalid action — without masking
+        the −0.1 invalid-action penalty dominates early on-policy learning and
+        the policy collapses to always-Hold (0% return).
+        """
+        price = self._price()
+        can_buy  = int((self.capital * self.position_size) //
+                       (price * (1 + self.commission_pct))) > 0
+        can_sell = self.num_shares > 0
+        return np.array([can_buy, can_sell, True], dtype=bool)
+
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.capital = self.initial_capital
@@ -181,6 +196,10 @@ class StockTradingEnv(gymnasium.Env):
         plt.figure(figsize=(14, 5))
         plt.plot(self.account_history, color="#00ff87", linewidth=2, label="Portfolio")
         plt.axhline(self.initial_capital, color="red", linestyle="--", label="Initial capital")
-        plt.xlabel("Step"); plt.ylabel("Value ($)")
-        plt.title("Portfolio Value"); plt.legend(); plt.grid(alpha=0.3)
-        plt.tight_layout(); plt.show()
+        plt.xlabel("Step")
+        plt.ylabel("Value ($)")
+        plt.title("Portfolio Value")
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.show()
