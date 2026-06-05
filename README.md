@@ -14,6 +14,10 @@
 
 Five reinforcement learning agents (Random, DQN, DDQN, A2C, PPO) trade a configurable stock portfolio against historical OHLCV data. A live dashboard streams trades step-by-step over WebSocket, renders them on a custom SVG candlestick chart (with Bollinger Band overlays and trade markers), plots portfolio equity vs buy-and-hold, and displays Sharpe ratio, max drawdown, win rate, and alpha — in real time.
 
+![RiskAssessRL dashboard](docs/screenshots/dashboard.png)
+
+*Charts tab — backtest + risk-management controls on the left, AAPL candlesticks with a market-regime badge up top, portfolio-vs-buy-&-hold below. Two more tabs (Compare Algos, Models) sit alongside it.*
+
 ---
 
 ## Architecture
@@ -53,6 +57,19 @@ Five reinforcement learning agents (Random, DQN, DDQN, A2C, PPO) trade a configu
 
 ## Quickstart
 
+Common workflows are wrapped in a **`Makefile`** (`make help` lists them all):
+
+```bash
+make install    # Python + frontend deps
+make data       # download + feature-engineer AAPL MSFT GOOGL NVDA SPY
+make train      # train all agents (DQN/DDQN 2000 eps, A2C/PPO 3000 eps)
+make evaluate   # regenerate results/comparison.json
+make test lint  # run tests + lint (same checks as CI)
+make backend    # FastAPI on :8000   (separate terminal: make frontend → :3000)
+```
+
+The explicit commands behind those targets:
+
 ### Local (dev mode — fastest)
 
 ```bash
@@ -72,12 +89,9 @@ PYTHONPATH=. python -m src.train --algo A2C  --episodes 3000 &
 PYTHONPATH=. python -m src.train --algo PPO  --episodes 3000 &
 wait
 
-# 5. Evaluate and generate results/comparison.json
-PYTHONPATH=. python -c "
-import pandas as pd; from src.evaluate import run_comparison
-df = pd.read_csv('data/processed/AAPL_features.csv', parse_dates=['Date'])
-run_comparison(df, model_dir='models')
-"
+# 5. Evaluate → results/comparison.json
+#    (also available: --mode walkforward, --mode generalization)
+PYTHONPATH=. python -m src.evaluate --mode comparison
 
 # 6. Start backend
 PYTHONPATH=. uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
@@ -135,14 +149,21 @@ RiskAssessRL/
 │   ├── test_pipeline.py   # 14 tests: indicators, schema validation, edge cases
 │   └── test_api.py        # 17 tests: health, algorithms, data, simulate endpoints
 ├── docs/
-│   └── archive/
-│       └── original_course_project/  # Original course notebook, prototype weights, report
+│   ├── screenshots/      # Dashboard screenshot embedded in this README
+│   └── archive/          # Original course notebook, prototype weights, report
 ├── data/
-│   ├── raw/               # Raw OHLCV CSVs from yfinance
-│   └── processed/         # Feature-engineered CSVs (committed as source of truth)
-├── models/                # Trained .pth weight files (committed for reproducibility)
+│   ├── raw/              # Raw OHLCV CSVs from yfinance
+│   └── processed/        # Feature-engineered CSVs (committed as source of truth)
+├── models/               # Trained .pth weights + reward-curve PNGs (committed)
 ├── results/
-│   └── comparison.json    # Latest agent evaluation results
+│   ├── comparison.json     # Single-split evaluation (all agents + benchmarks)
+│   ├── walkforward.json    # 5-fold walk-forward results
+│   └── generalization.json # Zero-shot cross-asset results
+├── .github/workflows/
+│   └── ci.yml            # Lint + tests + frontend build on push / PR
+├── Makefile              # Common workflows — run `make help`
+├── pyproject.toml        # Project metadata + ruff config
+├── pytest.ini
 ├── docker-compose.yml
 └── requirements.txt
 ```
@@ -370,7 +391,40 @@ On-policy agents learn only from actions they actually sample. The env penalises
 
 ---
 
-## Authors
+## Limitations & Honest Notes
+
+This is a research and engineering project, not a trading system or financial advice.
+
+- **Not live-trading-ready.** No broker integration, no live data feed, no order
+  execution. Everything here is a historical backtest on daily bars.
+- **Backtests flatter reality.** Trades fill at the daily close with no slippage
+  or market impact beyond a flat commission — real fills would be worse.
+- **Single-split numbers are optimistic.** A model can shine on one test window
+  and be mediocre across regimes — which is exactly what the walk-forward results
+  show for DDQN. Treat the walk-forward mean ± std as the honest signal, not the
+  single-split table.
+- **Favourable universe.** The tickers are a handful of large-cap names that
+  trended up over the sample; results won't generalise to all markets, and the
+  zero-shot section shows transfer is partial (it fails on MSFT).
+- **Deliberately simple action space.** Buy-all / sell-all / hold, with a single
+  global position-size fraction — not per-trade sizing.
+- **Laptop-scale training.** Episode counts are set to finish in minutes, not to
+  maximise performance.
+
+### What it hopes to achieve
+
+A clean, reproducible, end-to-end RL-for-trading pipeline — data → features →
+validated environment → trained agents → honest evaluation (single-split,
+walk-forward, zero-shot) → a live dashboard — that is straightforward to read,
+run, and extend to new tickers or new agents.
+
+---
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
+
+## Author
 
 Shubham Sharma · Cornell University
 
