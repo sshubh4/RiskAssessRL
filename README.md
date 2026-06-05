@@ -1,4 +1,4 @@
-# RiskAssessRL
+2# RiskAssessRL
 
 > Reinforcement learning platform for risk-adjusted trading strategy simulation — with a TradingView-style live dashboard.
 
@@ -426,6 +426,6 @@ Apache-2.0 — see [LICENSE](LICENSE).
 
 ## Author
 
-Shubham Sharma · Cornell University
+Shubham Sharma - University at Buffalo
 
 *Extended from the original course project (see `docs/archive/original_course_project/`).*
