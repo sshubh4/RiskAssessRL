@@ -1,4 +1,4 @@
-2# RiskAssessRL
+# RiskAssessRL
 
 > Reinforcement learning platform for risk-adjusted trading strategy simulation — with a TradingView-style live dashboard.
 
