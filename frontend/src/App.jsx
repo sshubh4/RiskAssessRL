@@ -6,8 +6,7 @@ import PortfolioChart from './components/PortfolioChart'
 import StatStrip from './components/StatStrip'
 import ComparisonTable from './components/ComparisonTable'
 import AlgorithmsTab from './components/AlgorithmsTab'
-
-const WS_URL = `ws://${window.location.hostname}:8000/ws/simulate`
+import { API_URL, WS_URL } from './config'
 
 const RUN_COLORS = ['#2962ff', '#f6c90e', '#9c27b0']
 
@@ -115,7 +114,7 @@ export default function App() {
 
   // Load data on ticker change
   useEffect(() => {
-    fetch(`/api/data?ticker=${ticker}`)
+    fetch(`${API_URL}/api/data?ticker=${ticker}`)
       .then(r => r.json())
       .then(d => {
         const data = d.data ?? []
@@ -132,7 +131,7 @@ export default function App() {
         }
       }).catch(() => {})
 
-    fetch('/api/algorithms')
+    fetch(`${API_URL}/api/algorithms`)
       .then(r => r.json())
       .then(d => {
         setComparison(d.results ?? [])
@@ -143,7 +142,7 @@ export default function App() {
       })
       .catch(() => {})
 
-    fetch('/health')
+    fetch(`${API_URL}/health`)
       .then(r => r.json())
       .then(d => {
         setDataFreshness(d.data_freshness)
@@ -172,7 +171,7 @@ export default function App() {
     setPortfolioHistory([capital])
     stepsRef.current = []
 
-    const ws = new WebSocket(WS_URL)
+    const ws = new WebSocket(`${WS_URL}/ws/simulate`)
     wsRef.current = ws
 
     // In backtest mode use bt-specific params; in simulate mode use simParams
@@ -198,7 +197,7 @@ export default function App() {
         setPortfolioHistory(prev => [...prev, msg.data.portfolio_value])
       } else if (msg.type === 'done' || msg.type === 'complete') {
         setRunning(false)
-        fetch('/api/algorithms')
+        fetch(`${API_URL}/api/algorithms`)
           .then(r => r.json())
           .then(d => {
             setComparison(d.results ?? [])
@@ -226,7 +225,7 @@ export default function App() {
     setPortfolioHistory([capital])
     stepsRef.current = []
     try {
-      const res = await fetch('/api/run_all_backtest', {
+      const res = await fetch(`${API_URL}/api/run_all_backtest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
