@@ -1,0 +1,397 @@
+{
+  "method": "expanding-window walk-forward, 5 folds",
+  "folds_completed": 5,
+  "value_episodes_per_fold": 400,
+  "policy_episodes_per_fold": 300,
+  "folds": [
+    {
+      "fold": 1,
+      "train_rows": 200,
+      "test_rows": 200,
+      "train_dates": [
+        "2021-08-06",
+        "2022-05-20"
+      ],
+      "test_dates": [
+        "2022-05-23",
+        "2023-03-09"
+      ]
+    },
+    {
+      "fold": 2,
+      "train_rows": 400,
+      "test_rows": 200,
+      "train_dates": [
+        "2021-08-06",
+        "2023-03-09"
+      ],
+      "test_dates": [
+        "2023-03-10",
+        "2023-12-22"
+      ]
+    },
+    {
+      "fold": 3,
+      "train_rows": 600,
+      "test_rows": 200,
+      "train_dates": [
+        "2021-08-06",
+        "2023-12-22"
+      ],
+      "test_dates": [
+        "2023-12-26",
+        "2024-10-10"
+      ]
+    },
+    {
+      "fold": 4,
+      "train_rows": 800,
+      "test_rows": 200,
+      "train_dates": [
+        "2021-08-06",
+        "2024-10-10"
+      ],
+      "test_dates": [
+        "2024-10-11",
+        "2025-07-31"
+      ]
+    },
+    {
+      "fold": 5,
+      "train_rows": 1000,
+      "test_rows": 205,
+      "train_dates": [
+        "2021-08-06",
+        "2025-07-31"
+      ],
+      "test_dates": [
+        "2025-08-01",
+        "2026-05-26"
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "algo": "Random",
+      "return_mean": 2.3761,
+      "return_std": 9.5415,
+      "sharpe_mean": 0.1556,
+      "sharpe_std": 0.8369,
+      "max_dd_mean": -0.143375,
+      "fold_returns": [
+        2.3173,
+        2.9302,
+        7.2849,
+        -14.7516,
+        14.0996
+      ],
+      "fold_sharpes": [
+        0.1226,
+        0.1311,
+        0.6494,
+        -1.3199,
+        1.1947
+      ]
+    },
+    {
+      "algo": "DQN",
+      "return_mean": 17.7814,
+      "return_std": 16.3816,
+      "sharpe_mean": 1.8747,
+      "sharpe_std": 1.4409,
+      "max_dd_mean": -0.071273,
+      "fold_returns": [
+        -10.7654,
+        18.7229,
+        32.4268,
+        13.5955,
+        34.927
+      ],
+      "fold_sharpes": [
+        -0.6587,
+        2.7434,
+        2.8086,
+        1.2229,
+        3.2573
+      ]
+    },
+    {
+      "algo": "DDQN",
+      "return_mean": 8.0757,
+      "return_std": 16.9598,
+      "sharpe_mean": 0.3806,
+      "sharpe_std": 1.4512,
+      "max_dd_mean": -0.138683,
+      "fold_returns": [
+        -12.2248,
+        -8.2086,
+        17.4755,
+        9.3596,
+        33.977
+      ],
+      "fold_sharpes": [
+        -1.0836,
+        -1.3824,
+        1.4287,
+        0.5204,
+        2.42
+      ]
+    },
+    {
+      "algo": "A2C",
+      "return_mean": 16.8981,
+      "return_std": 10.1153,
+      "sharpe_mean": 1.0791,
+      "sharpe_std": 0.6059,
+      "max_dd_mean": -0.146407,
+      "fold_returns": [
+        2.5401,
+        8.8019,
+        30.5645,
+        23.9858,
+        18.5983
+      ],
+      "fold_sharpes": [
+        0.1483,
+        0.7444,
+        1.9648,
+        1.2875,
+        1.2505
+      ]
+    },
+    {
+      "algo": "PPO",
+      "return_mean": 19.9499,
+      "return_std": 11.4169,
+      "sharpe_mean": 1.5734,
+      "sharpe_std": 0.7991,
+      "max_dd_mean": -0.083309,
+      "fold_returns": [
+        20.6253,
+        9.7309,
+        31.8088,
+        4.5878,
+        32.9966
+      ],
+      "fold_sharpes": [
+        2.0944,
+        0.968,
+        2.213,
+        0.2978,
+        2.2938
+      ]
+    }
+  ],
+  "per_fold": {
+    "Random": [
+      {
+        "algo": "Random",
+        "final_portfolio_value": 102317.26,
+        "total_return_pct": 2.3173,
+        "sharpe_ratio": 0.1226,
+        "max_drawdown": -0.185305,
+        "n_steps": 150
+      },
+      {
+        "algo": "Random",
+        "final_portfolio_value": 102930.22,
+        "total_return_pct": 2.9302,
+        "sharpe_ratio": 0.1311,
+        "max_drawdown": -0.12628,
+        "n_steps": 150
+      },
+      {
+        "algo": "Random",
+        "final_portfolio_value": 107284.88,
+        "total_return_pct": 7.2849,
+        "sharpe_ratio": 0.6494,
+        "max_drawdown": -0.07526,
+        "n_steps": 150
+      },
+      {
+        "algo": "Random",
+        "final_portfolio_value": 85248.35,
+        "total_return_pct": -14.7516,
+        "sharpe_ratio": -1.3199,
+        "max_drawdown": -0.235525,
+        "n_steps": 150
+      },
+      {
+        "algo": "Random",
+        "final_portfolio_value": 114099.63,
+        "total_return_pct": 14.0996,
+        "sharpe_ratio": 1.1947,
+        "max_drawdown": -0.094503,
+        "n_steps": 155
+      }
+    ],
+    "DQN": [
+      {
+        "algo": "DQN",
+        "final_portfolio_value": 89234.59,
+        "total_return_pct": -10.7654,
+        "sharpe_ratio": -0.6587,
+        "max_drawdown": -0.173168,
+        "n_steps": 150
+      },
+      {
+        "algo": "DQN",
+        "final_portfolio_value": 118722.9,
+        "total_return_pct": 18.7229,
+        "sharpe_ratio": 2.7434,
+        "max_drawdown": -0.038337,
+        "n_steps": 150
+      },
+      {
+        "algo": "DQN",
+        "final_portfolio_value": 132426.76,
+        "total_return_pct": 32.4268,
+        "sharpe_ratio": 2.8086,
+        "max_drawdown": -0.032228,
+        "n_steps": 150
+      },
+      {
+        "algo": "DQN",
+        "final_portfolio_value": 113595.53,
+        "total_return_pct": 13.5955,
+        "sharpe_ratio": 1.2229,
+        "max_drawdown": -0.079992,
+        "n_steps": 150
+      },
+      {
+        "algo": "DQN",
+        "final_portfolio_value": 134926.97,
+        "total_return_pct": 34.927,
+        "sharpe_ratio": 3.2573,
+        "max_drawdown": -0.032641,
+        "n_steps": 155
+      }
+    ],
+    "DDQN": [
+      {
+        "algo": "DDQN",
+        "final_portfolio_value": 87775.17,
+        "total_return_pct": -12.2248,
+        "sharpe_ratio": -1.0836,
+        "max_drawdown": -0.256646,
+        "n_steps": 150
+      },
+      {
+        "algo": "DDQN",
+        "final_portfolio_value": 91791.37,
+        "total_return_pct": -8.2086,
+        "sharpe_ratio": -1.3824,
+        "max_drawdown": -0.122486,
+        "n_steps": 150
+      },
+      {
+        "algo": "DDQN",
+        "final_portfolio_value": 117475.55,
+        "total_return_pct": 17.4755,
+        "sharpe_ratio": 1.4287,
+        "max_drawdown": -0.09446,
+        "n_steps": 150
+      },
+      {
+        "algo": "DDQN",
+        "final_portfolio_value": 109359.56,
+        "total_return_pct": 9.3596,
+        "sharpe_ratio": 0.5204,
+        "max_drawdown": -0.140366,
+        "n_steps": 150
+      },
+      {
+        "algo": "DDQN",
+        "final_portfolio_value": 133977.01,
+        "total_return_pct": 33.977,
+        "sharpe_ratio": 2.42,
+        "max_drawdown": -0.079458,
+        "n_steps": 155
+      }
+    ],
+    "A2C": [
+      {
+        "algo": "A2C",
+        "final_portfolio_value": 102540.14,
+        "total_return_pct": 2.5401,
+        "sharpe_ratio": 0.1483,
+        "max_drawdown": -0.195804,
+        "n_steps": 150
+      },
+      {
+        "algo": "A2C",
+        "final_portfolio_value": 108801.91,
+        "total_return_pct": 8.8019,
+        "sharpe_ratio": 0.7444,
+        "max_drawdown": -0.104846,
+        "n_steps": 150
+      },
+      {
+        "algo": "A2C",
+        "final_portfolio_value": 130564.49,
+        "total_return_pct": 30.5645,
+        "sharpe_ratio": 1.9648,
+        "max_drawdown": -0.117361,
+        "n_steps": 150
+      },
+      {
+        "algo": "A2C",
+        "final_portfolio_value": 123985.76,
+        "total_return_pct": 23.9858,
+        "sharpe_ratio": 1.2875,
+        "max_drawdown": -0.159973,
+        "n_steps": 150
+      },
+      {
+        "algo": "A2C",
+        "final_portfolio_value": 118598.31,
+        "total_return_pct": 18.5983,
+        "sharpe_ratio": 1.2505,
+        "max_drawdown": -0.154053,
+        "n_steps": 155
+      }
+    ],
+    "PPO": [
+      {
+        "algo": "PPO",
+        "final_portfolio_value": 120625.27,
+        "total_return_pct": 20.6253,
+        "sharpe_ratio": 2.0944,
+        "max_drawdown": -0.064479,
+        "n_steps": 150
+      },
+      {
+        "algo": "PPO",
+        "final_portfolio_value": 109730.87,
+        "total_return_pct": 9.7309,
+        "sharpe_ratio": 0.968,
+        "max_drawdown": -0.08884,
+        "n_steps": 150
+      },
+      {
+        "algo": "PPO",
+        "final_portfolio_value": 131808.83,
+        "total_return_pct": 31.8088,
+        "sharpe_ratio": 2.213,
+        "max_drawdown": -0.076436,
+        "n_steps": 150
+      },
+      {
+        "algo": "PPO",
+        "final_portfolio_value": 104587.84,
+        "total_return_pct": 4.5878,
+        "sharpe_ratio": 0.2978,
+        "max_drawdown": -0.083362,
+        "n_steps": 150
+      },
+      {
+        "algo": "PPO",
+        "final_portfolio_value": 132996.62,
+        "total_return_pct": 32.9966,
+        "sharpe_ratio": 2.2938,
+        "max_drawdown": -0.103426,
+        "n_steps": 155
+      }
+    ]
+  }
+}

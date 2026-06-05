@@ -307,8 +307,13 @@ def walk_forward(df: pd.DataFrame, n_folds: int = 5,
     report mean ± std of return and Sharpe across folds — a far more honest
     measure of regime generalisation than a single fixed 80/20 split.
     """
+    import torch
     from src.env import StockTradingEnv
     from src.agents import RandomAgent
+
+    # These nets are tiny; uncapped intra-op threading just thrashes the CPU
+    # (and can get the long sequential run OOM/load-killed). Cap it.
+    torch.set_num_threads(min(4, torch.get_num_threads()))
 
     N = len(df)
     block = N // (n_folds + 1)
@@ -317,6 +322,41 @@ def walk_forward(df: pd.DataFrame, n_folds: int = 5,
     folds_meta = []
 
     has_date = "Date" in df.columns
+    RESULTS_DIR.mkdir(exist_ok=True)
+    out_path = RESULTS_DIR / "walkforward.json"
+
+    def _checkpoint(completed: int) -> dict:
+        """Write walkforward.json from the folds completed so far. Called after
+        every fold so a long run that is interrupted still leaves usable data."""
+        summary = []
+        for algo in algos:
+            rets    = np.array([f["total_return_pct"] for f in per_fold[algo]], dtype=float)
+            sharpes = np.array([f["sharpe_ratio"]     for f in per_fold[algo]], dtype=float)
+            dds     = np.array([f["max_drawdown"]     for f in per_fold[algo]], dtype=float)
+            if len(rets) == 0:
+                continue
+            summary.append({
+                "algo":         algo,
+                "return_mean":  round(float(rets.mean()), 4),
+                "return_std":   round(float(rets.std()), 4),
+                "sharpe_mean":  round(float(sharpes.mean()), 4),
+                "sharpe_std":   round(float(sharpes.std()), 4),
+                "max_dd_mean":  round(float(dds.mean()), 6),
+                "fold_returns": [round(float(x), 4) for x in rets],
+                "fold_sharpes": [round(float(x), 4) for x in sharpes],
+            })
+        out = {
+            "method":          f"expanding-window walk-forward, {n_folds} folds",
+            "folds_completed": completed,
+            "value_episodes_per_fold":  value_episodes,
+            "policy_episodes_per_fold": policy_episodes,
+            "folds":           folds_meta,
+            "summary":         summary,
+            "per_fold":        {a: [{k: v for k, v in f.items() if k != "portfolio_history"}
+                                    for f in per_fold[a]] for a in algos},
+        }
+        out_path.write_text(json.dumps(out, indent=2))
+        return out
 
     for k in range(n_folds):
         train_end  = (k + 1) * block
@@ -362,35 +402,9 @@ def walk_forward(df: pd.DataFrame, n_folds: int = 5,
         ppo = _train_ppo_agent(df, train_end, policy_episodes)
         per_fold["PPO"].append(evaluate_agent("PPO", ppo, make_test_env()))
 
-    # ── Aggregate mean ± std per algorithm ──
-    summary = []
-    for algo in algos:
-        rets    = np.array([f["total_return_pct"] for f in per_fold[algo]], dtype=float)
-        sharpes = np.array([f["sharpe_ratio"]     for f in per_fold[algo]], dtype=float)
-        dds     = np.array([f["max_drawdown"]     for f in per_fold[algo]], dtype=float)
-        summary.append({
-            "algo":           algo,
-            "return_mean":    round(float(rets.mean()), 4),
-            "return_std":     round(float(rets.std()), 4),
-            "sharpe_mean":    round(float(sharpes.mean()), 4),
-            "sharpe_std":     round(float(sharpes.std()), 4),
-            "max_dd_mean":    round(float(dds.mean()), 6),
-            "fold_returns":   [round(float(x), 4) for x in rets],
-            "fold_sharpes":   [round(float(x), 4) for x in sharpes],
-        })
+        out = _checkpoint(k + 1)   # checkpoint after every fold
+        print(f"  [checkpoint] {k+1}/{n_folds} folds written → {out_path}")
 
-    out = {
-        "method":      f"expanding-window walk-forward, {n_folds} folds",
-        "value_episodes_per_fold":  value_episodes,
-        "policy_episodes_per_fold": policy_episodes,
-        "folds":       folds_meta,
-        "summary":     summary,
-        "per_fold":    {a: [{k: v for k, v in f.items() if k != "portfolio_history"}
-                            for f in per_fold[a]] for a in algos},
-    }
-    RESULTS_DIR.mkdir(exist_ok=True)
-    out_path = RESULTS_DIR / "walkforward.json"
-    out_path.write_text(json.dumps(out, indent=2))
     print(f"\n[walk-forward] saved → {out_path}")
     return out
 

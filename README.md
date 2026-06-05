@@ -154,10 +154,10 @@ RiskAssessRL/
 | Algorithm | Type | Replay Buffer | Architecture | Default Training |
 |---|---|---|---|---|
 | **Random** | Baseline | — | Uniform random over {Buy, Sell, Hold} | None |
-| **DQN** | Value-based, off-policy | 10 000 transitions | 3-layer MLP (451→128→64→3), ε-greedy | 2 000 episodes |
-| **DDQN** | Value-based, off-policy | 10 000 transitions | Dual MLP (online + target), decoupled argmax | 2 000 episodes |
-| **A2C** | Policy gradient, on-policy | — | Shared trunk (451→128→64) → actor + critic heads | 300 episodes |
-| **PPO** | Policy gradient, on-policy | — | Actor-critic, clipped ratio ε=0.2, GAE λ=0.95 | 300 episodes |
+| **DQN** | Value-based, off-policy | 10 000 transitions | 3-layer MLP (451→64→64→3), ε-greedy | 2 000 episodes |
+| **DDQN** | Value-based, off-policy | 10 000 transitions | DQN net + decoupled target (Double-DQN) | 2 000 episodes |
+| **A2C** | Policy gradient, on-policy | — | Shared trunk (451→256→256) → actor + critic heads, **action masking** | 3 000 episodes |
+| **PPO** | Policy gradient, on-policy | — | Actor-critic trunk (451→256→256), clipped ratio ε=0.2, **action masking** | 3 000 episodes |
 
 **Observation**: 50-day window × 9 Z-scored features + 1 position flag = **451-dimensional** vector
 
@@ -167,21 +167,105 @@ RiskAssessRL/
 
 **Reward**: `(portfolio_Δ / initial_capital) × 10` − `std(recent_returns) × 0.05 × risk_aversion` − `0.1` on invalid action
 
+**Action masking** (A2C/PPO only): invalid actions — Sell with no position, Buy with
+insufficient cash — are removed from the policy distribution at both training and
+inference, so on-policy agents can never be lured into the always-Hold trap by the
+invalid-action penalty. DQN/DDQN are trained unmasked (ε-greedy + replay handles it).
+
 ---
 
 ## Algorithm Results (AAPL, 20% test split, $100 000 starting capital)
 
 | Algorithm | Return | Sharpe | Max Drawdown | vs AAPL B&H | vs SPY B&H |
 |---|---|---|---|---|---|
-| Random | +5.48% | 0.280 | −12.1% | −47.2pp | −20.3pp |
-| DQN | +12.35% | 0.811 | −11.0% | −40.3pp | −13.4pp |
-| **DDQN** | **+29.94%** | **1.928** | **−9.3%** | **−22.8pp** | **+4.2pp** |
-| A2C | 0.00% | 0.000 | 0.0% | — | — |
-| PPO | 0.00% | 0.000 | 0.0% | — | — |
+| Random* | +16.38% | 1.091 | −10.9% | −36.3pp | −9.4pp |
+| DQN | +32.60% | 2.062 | −11.0% | −20.1pp | +6.8pp |
+| DDQN | +35.51% | 1.824 | −13.8% | −17.2pp | +9.7pp |
+| **A2C** | **+59.58%** | **3.179** | **−10.1%** | **+6.9pp** | **+33.8pp** |
+| PPO | +13.79% | 0.930 | −11.1% | −38.9pp | −12.0pp |
 | SPY B&H | +25.78% | — | — | — | — |
 | AAPL B&H | +52.70% | — | — | — | — |
 
-> **Note**: A2C and PPO are trained for only 300 episodes by default, which is insufficient for on-policy methods to escape the hold-only local optimum. Training A2C/PPO for 3 000+ episodes with a higher entropy coefficient yields non-trivial strategies. DDQN already outperforms SPY buy-and-hold by ~4 percentage points on the held-out test set.
+A2C is the only agent to beat AAPL buy-and-hold; A2C, DQN and DDQN all beat the SPY benchmark on a risk-adjusted basis. `*` Random is a single stochastic rollout and is inherently noisy run-to-run — see **Walk-Forward Validation** below for the robust mean ± std picture.
+
+> **Why A2C/PPO were `0.00%` before — and the fix.** On-policy agents initially
+> collapsed to an always-Hold policy (0% return) *regardless of episode count*.
+> The environment's −0.1 invalid-action penalty (Sell with no position, Buy with
+> no cash) makes Hold the only action that is never penalised, so on-policy
+> learning converges to it before it ever discovers a profitable buy→hold→sell
+> sequence — and more training made it *worse*. The fix is **action masking**:
+> invalid actions are masked out of the policy distribution so they can never be
+> sampled, combined with advantage normalisation and entropy annealing
+> (0.05 → 0.005). With masking, A2C becomes the strongest agent (+59.6%, Sharpe
+> 3.18) and PPO converges to a conservative single-position strategy (+13.8%).
+> DQN/DDQN never needed masking — ε-greedy exploration with a replay buffer
+> escapes the trap on its own. These are single-split numbers; the walk-forward
+> section stress-tests them across five sequential regimes.
+
+---
+
+## Walk-Forward Validation
+
+A single 80/20 split reports **one** test period — and one period can flatter a
+model that happened to suit that regime. Walk-forward validation is the honest
+alternative: the series is cut into six sequential blocks, and each fold trains on
+**all prior blocks** and tests on the **next, unseen** block, rolling forward.
+Five folds, each evaluated on a held-out ~10-month window it never trained on.
+(Reproduce: `python -m src.evaluate --mode walkforward`; saved to
+`results/walkforward.json`.)
+
+| Algorithm | Return (mean ± std) | Sharpe (mean ± std) | Losing folds |
+|---|---|---|---|
+| Random | +2.38% ± 9.54 | +0.16 ± 0.84 | 1 / 5 |
+| DQN | +17.78% ± 16.38 | +1.87 ± 1.44 | 1 / 5 |
+| DDQN | +8.08% ± 16.96 | +0.38 ± 1.45 | 2 / 5 |
+| **A2C** | +16.90% ± **10.12** | +1.08 ± 0.61 | **0 / 5** |
+| **PPO** | **+19.95%** ± 11.42 | +1.57 ± 0.80 | **0 / 5** |
+
+Held-out test windows: fold 1 `2022-05 → 2023-03`, fold 2 `2023-03 → 2023-12`,
+fold 3 `2023-12 → 2024-10`, fold 4 `2024-10 → 2025-07`, fold 5 `2025-08 → 2026-05`.
+
+**What this reveals that the single split hid:**
+- **Random averages ~0** across folds — confirming its lucky +16% on the single
+  split was regime noise, and that the harness itself is sound.
+- **DDQN, the single-split star (+35%), is the least reliable across time**
+  (Sharpe 0.38 ± 1.45, two losing folds). Its headline number was partly luck.
+- **The masked policy-gradient agents (A2C, PPO) are the most robust** — neither
+  had a single losing fold; A2C has the lowest variance, PPO the best mean return
+  with a strong, stable Sharpe. Masking didn't just un-break them — it produced
+  the most regime-general strategies in the suite.
+
+> Episode counts here (400 value / 300 policy per fold) are lower than the
+> headline single-split models (2 000 / 3 000) to keep the 20-run sweep
+> tractable, so absolute returns run a little lower — but the **cross-regime
+> ranking** is the point, not the absolute level.
+
+---
+
+## Cross-Asset Generalization (Zero-Shot)
+
+Does the agent learn a transferable trading pattern, or does it just memorise
+one stock? To find out, the **DDQN agent trained only on AAPL** is run
+zero-shot — no retraining, no fine-tuning — on the held-out test slice of every
+other ticker. (Reproduce with `python -m src.evaluate --mode generalization`;
+saved to `results/generalization.json`.)
+
+| Ticker | DDQN Return | DDQN Sharpe | Max DD | Buy & Hold | Verdict |
+|---|---|---|---|---|---|
+| **AAPL** (trained) | +35.51% | +1.82 | −13.8% | +52.70% | reference |
+| GOOGL | +62.30% | +2.41 | −20.3% | +118.19% | transfers strongly |
+| NVDA | +16.52% | +0.66 | −20.2% | +49.23% | transfers |
+| SPY | +11.40% | +0.93 | −9.1% | +25.78% | transfers |
+| MSFT | −17.43% | −1.02 | −33.8% | −10.95% | fails to transfer |
+
+**Read:** the AAPL-trained policy transfers *positively* (positive return **and**
+Sharpe) to three of four unseen tickers, collapsing only on MSFT. It does not
+beat each asset's buy-and-hold during these strong bull runs — it stays
+risk-managed and partly in cash — but a Sharpe of 2.4 on GOOGL and 0.9 on the
+broad market (SPY), from a model that never saw those series, is evidence it
+learned a generalisable momentum/mean-reversion signal rather than overfitting
+to AAPL. Generalisation is **partial, not universal** — MSFT's different regime
+breaks it, which is the honest result.
 
 ---
 
@@ -281,8 +365,8 @@ Stop-loss/take-profit as reward penalties would require retraining every time a 
 **Why hand-built SVG charts?**
 The charts required precise control over candle geometry, trade-marker overlays, and ResizeObserver-driven re-layout that charting library abstractions made harder, not easier. Custom SVG is ~300 lines and has zero runtime dependencies.
 
-**Why are A2C and PPO 0% return by default?**
-On-policy methods have high-variance gradient estimates and converge slowly from random initialisation. The default 300 training episodes is a quick smoke-test value. Train A2C/PPO for 3 000+ episodes to see real strategies emerge.
+**Why did A2C/PPO need action masking when DQN/DDQN didn't?**
+On-policy agents learn only from actions they actually sample. The env penalises invalid actions (−0.1), and Hold is the one action that is *never* invalid — so an on-policy policy minimises penalties by collapsing to Hold before it ever samples enough profitable buy→sell cycles to learn otherwise. More episodes reinforced the collapse rather than escaping it. DQN/DDQN avoid this because ε-greedy forces invalid/exploratory actions into a replay buffer, so their value estimates still learn what trading is worth. Masking invalid actions out of the policy distribution removes the trap entirely; with it, A2C goes from 0% to +59.6% (Sharpe 3.18).
 
 ---
 
