@@ -2,11 +2,12 @@
 
 > Reinforcement learning platform for risk-adjusted trading strategy simulation — with a TradingView-style live dashboard.
 
-[![Dashboard](https://img.shields.io/badge/Dashboard-localhost%3A3000-2962ff?style=flat-square)](http://localhost:3000)
-[![MLflow](https://img.shields.io/badge/MLflow_UI-localhost%3A5000-0194e2?style=flat-square)](http://localhost:5000)
-[![API Docs](https://img.shields.io/badge/API_Docs-localhost%3A8000%2Fdocs-009688?style=flat-square)](http://localhost:8000/docs)
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Vercel-2962ff?style=flat-square&logo=vercel)](https://risk-assess-rl.vercel.app)
+[![API](https://img.shields.io/badge/API-Railway-0B0D0E?style=flat-square&logo=railway)](https://riskassessrl-production.up.railway.app/docs)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776ab?style=flat-square&logo=python)](https://python.org)
 [![Tests](https://img.shields.io/badge/Tests-44%20passing-26a69a?style=flat-square)](tests/)
+
+**▶ Live demo: [risk-assess-rl.vercel.app](https://risk-assess-rl.vercel.app)** — UI on Vercel, API on Railway ([API docs](https://riskassessrl-production.up.railway.app/docs)). The backend may cold-start on the first request, so give it a few seconds to wake up.
 
 ---
 
@@ -100,7 +101,7 @@ PYTHONPATH=. uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 cd frontend && npm install && npm run dev
 ```
 
-Open **http://localhost:3000** to see the dashboard.
+Open **http://localhost:3000** to see the dashboard — or skip local setup entirely and use the [live demo](https://risk-assess-rl.vercel.app).
 
 ### Docker
 
@@ -113,6 +114,22 @@ Services:
 - Dashboard: http://localhost:3000
 - API + Swagger docs: http://localhost:8000/docs
 - MLflow UI: http://localhost:5000
+
+### Live deployment (Vercel + Railway)
+
+The hosted demo runs as two independent services:
+
+| Layer | Host | URL |
+|---|---|---|
+| Frontend — static Vite build | Vercel | <https://risk-assess-rl.vercel.app> |
+| Backend — FastAPI + WebSocket | Railway | <https://riskassessrl-production.up.railway.app> |
+
+The frontend reads its API base URL from `VITE_API_URL` at build time (see
+`frontend/src/config.js`); on Vercel that variable is set to the Railway URL, and
+the WebSocket URL is derived from it (`https` → `wss`). The backend image bundles
+the trained model weights and the processed data, so the demo needs no external
+database. Depending on the hosting plan the backend may cold-start when idle, so
+the first request after a pause can take a few seconds.
 
 ---
 
@@ -317,7 +334,7 @@ All risk parameters are applied as **action overrides at inference time** — th
 | `POST` | `/api/run_all_backtest` | Runs all 5 algos under identical params; returns comparison + benchmarks |
 | `WS` | `/ws/simulate` | Real-time step streaming: speed control, SL/TP/DD, date range |
 
-Interactive docs: **http://localhost:8000/docs**
+Interactive docs: **http://localhost:8000/docs** locally, or **[live on Railway](https://riskassessrl-production.up.railway.app/docs)**.
 
 ---
 
